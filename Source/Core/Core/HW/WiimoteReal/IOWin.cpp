@@ -996,21 +996,21 @@ bool AttachWiimote(HANDLE hRadio, const BLUETOOTH_RADIO_INFO& radio_info,
 // Removes remembered non-connected devices
 bool ForgetWiimote(BLUETOOTH_DEVICE_INFO_STRUCT& btdi)
 {
-  if (!btdi.fConnected && btdi.fRemembered)
+  //if (!btdi.fConnected && btdi.fRemembered)
   {
     // Time to avoid RemoveDevice after SetServiceState.
     // Sometimes SetServiceState takes a while..
-    auto const avoid_forget_seconds = 5.0;
+    // auto const avoid_forget_seconds = 5.0;
 
     const auto pair_time = s_connect_times.find(btdi.Address.ullLong);
-    if (pair_time == s_connect_times.end() ||
-        std::difftime(time(nullptr), pair_time->second) >= avoid_forget_seconds)
+    //if (pair_time == s_connect_times.end() ||
+      //  std::difftime(time(nullptr), pair_time->second) >= avoid_forget_seconds)
     {
       // Make Windows forget about device so it will re-find it if visible.
       // This is also required to detect a disconnect for some reason..
-      NOTICE_LOG_FMT(WIIMOTE, "Removing remembered Wiimote.");
-      pBluetoothRemoveDevice(&btdi.Address);
-      return true;
+      // NOTICE_LOG_FMT(WIIMOTE, "Removing remembered Wiimote.");
+      // pBluetoothRemoveDevice(&btdi.Address);
+     // return true;
     }
   }
 
