@@ -135,8 +135,8 @@ void AchievementSettingsWidget::ConnectWidgets()
 {
   connect(m_common_integration_enabled_input, &QCheckBox::toggled, this,
           &AchievementSettingsWidget::ToggleRAIntegration);
-  connect(m_common_login_button, &QPushButton::pressed, this, &AchievementSettingsWidget::Login);
-  connect(m_common_logout_button, &QPushButton::pressed, this, &AchievementSettingsWidget::Logout);
+  connect(m_common_login_button, &QPushButton::clicked, this, &AchievementSettingsWidget::Login);
+  connect(m_common_logout_button, &QPushButton::clicked, this, &AchievementSettingsWidget::Logout);
   connect(m_common_hardcore_enabled_input, &QCheckBox::toggled, this,
           &AchievementSettingsWidget::ToggleHardcore);
   connect(m_common_unofficial_enabled_input, &QCheckBox::toggled, this,
@@ -178,6 +178,15 @@ void AchievementSettingsWidget::LoadSettings()
   SignalBlocking(m_common_login_button)->setVisible(logged_out);
   SignalBlocking(m_common_login_button)
       ->setEnabled(enabled && !Core::IsRunning(Core::System::GetInstance()));
+  if (enabled && Core::IsRunning(Core::System::GetInstance()))
+  {
+    SignalBlocking(m_common_login_button)->setText(tr("To log in, stop the current emulation."));
+  }
+  else
+  {
+    SignalBlocking(m_common_login_button)->setText(tr("Log In"));
+  }
+
   SignalBlocking(m_common_logout_button)->setVisible(!logged_out);
   SignalBlocking(m_common_logout_button)->setEnabled(enabled);
 
