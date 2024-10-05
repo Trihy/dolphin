@@ -28,7 +28,8 @@ AXWiiUCode::AXWiiUCode(DSPHLE* dsphle, u32 crc)
   for (u16& volume : m_last_aux_volumes)
     volume = 0x8000;
 
-  m_old_axwii = (crc == 0xfa450138) || (crc == 0x7699af32);
+  m_old_axwii = crc == 0xfa450138 || crc == 0x7699af32;
+  m_new_filter = crc == 0x347112ba || crc == 0x4cc52064;
 
   m_accelerator = std::make_unique<HLEAccelerator>(dsphle->GetSystem().GetDSP());
 }
@@ -450,7 +451,7 @@ void AXWiiUCode::ProcessPBList(u32 pb_addr)
         ApplyUpdatesForMs(curr_ms, pb, num_updates, updates);
         ProcessVoice(static_cast<HLEAccelerator*>(m_accelerator.get()), pb, buffers, spms,
                      ConvertMixerControl(HILO_TO_32(pb.mixer_control)),
-                     m_coeffs_checksum ? m_coeffs.data() : nullptr);
+                     m_coeffs_checksum ? m_coeffs.data() : nullptr, m_new_filter);
 
         // Forward the buffers
         for (auto& ptr : buffers.ptrs)
@@ -462,7 +463,7 @@ void AXWiiUCode::ProcessPBList(u32 pb_addr)
     {
       ProcessVoice(static_cast<HLEAccelerator*>(m_accelerator.get()), pb, buffers, 96,
                    ConvertMixerControl(HILO_TO_32(pb.mixer_control)),
-                   m_coeffs_checksum ? m_coeffs.data() : nullptr);
+                   m_coeffs_checksum ? m_coeffs.data() : nullptr, m_new_filter);
     }
 
     WritePB(memory, pb_addr, pb, m_crc);
@@ -601,15 +602,16 @@ void AXWiiUCode::OutputSamples(u32 lr_addr, u32 surround_addr, u16 volume, bool 
   // Clamp internal buffers to 16 bits.
   for (size_t i = 0; i < volume_ramp.size(); ++i)
   {
-    int left = m_samples_main_left[i];
-    int right = m_samples_main_right[i];
+    // Cast to s64 to avoid overflow.
+    s64 left = m_samples_main_left[i];
+    s64 right = m_samples_main_right[i];
 
-    // Apply global volume. Cast to s64 to avoid overflow.
-    left = ((s64)left * volume_ramp[i]) >> 15;
-    right = ((s64)right * volume_ramp[i]) >> 15;
+    // Apply global volume.
+    left = (left * volume_ramp[i]) >> 15;
+    right = (right * volume_ramp[i]) >> 15;
 
-    m_samples_main_left[i] = std::clamp(left, -32767, 32767);
-    m_samples_main_right[i] = std::clamp(right, -32767, 32767);
+    m_samples_main_left[i] = ClampS16(left);
+    m_samples_main_right[i] = ClampS16(right);
   }
 
   std::array<s16, 3 * 32 * 2> buffer;
@@ -634,7 +636,7 @@ void AXWiiUCode::OutputWMSamples(u32* addresses)
     u16* out = (u16*)HLEMemory_Get_Pointer(memory, addresses[i]);
     for (u32 j = 0; j < 3 * 6; ++j)
     {
-      int sample = std::clamp(in[j], -32767, 32767);
+      s16 sample = ClampS16(in[j]);
       out[j] = Common::swap16((u16)sample);
     }
   }

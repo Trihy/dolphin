@@ -277,20 +277,16 @@ void HotkeyScheduler::Run()
 
       if (Core::System::GetInstance().IsWii())
       {
-        int wiimote_id = -1;
         if (IsHotkey(HK_WIIMOTE1_CONNECT))
-          wiimote_id = 0;
+          emit ConnectWiiRemote(0);
         if (IsHotkey(HK_WIIMOTE2_CONNECT))
-          wiimote_id = 1;
+          emit ConnectWiiRemote(1);
         if (IsHotkey(HK_WIIMOTE3_CONNECT))
-          wiimote_id = 2;
+          emit ConnectWiiRemote(2);
         if (IsHotkey(HK_WIIMOTE4_CONNECT))
-          wiimote_id = 3;
+          emit ConnectWiiRemote(3);
         if (IsHotkey(HK_BALANCEBOARD_CONNECT))
-          wiimote_id = 4;
-
-        if (wiimote_id > -1)
-          emit ConnectWiiRemote(wiimote_id);
+          emit ConnectWiiRemote(4);
 
         if (IsHotkey(HK_TOGGLE_SD_CARD))
           Settings::Instance().SetSDCardInserted(!Settings::Instance().IsSDCardInserted());
@@ -473,7 +469,14 @@ void HotkeyScheduler::Run()
       }
 
       if (IsHotkey(HK_TOGGLE_DUMPTEXTURES))
-        Config::SetCurrent(Config::GFX_DUMP_TEXTURES, !Config::Get(Config::GFX_DUMP_TEXTURES));
+      {
+        const bool enable_dumping = !Config::Get(Config::GFX_DUMP_TEXTURES);
+        Config::SetCurrent(Config::GFX_DUMP_TEXTURES, enable_dumping);
+        OSD::AddMessage(
+            fmt::format("Texture Dumping {}",
+                        enable_dumping ? "enabled. This will reduce performance." : "disabled."),
+            OSD::Duration::NORMAL);
+      }
 
       if (IsHotkey(HK_TOGGLE_TEXTURES))
         Config::SetCurrent(Config::GFX_HIRES_TEXTURES, !Config::Get(Config::GFX_HIRES_TEXTURES));

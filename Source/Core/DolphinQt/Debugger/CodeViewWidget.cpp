@@ -7,6 +7,7 @@
 #include <cmath>
 
 #include <fmt/format.h>
+#include <fmt/ranges.h>
 
 #include <QApplication>
 #include <QClipboard>
@@ -186,6 +187,8 @@ CodeViewWidget::CodeViewWidget()
     Update();
   });
   connect(Host::GetInstance(), &Host::PPCSymbolsChanged, this,
+          qOverload<>(&CodeViewWidget::Update));
+  connect(Host::GetInstance(), &Host::PPCBreakpointsChanged, this,
           qOverload<>(&CodeViewWidget::Update));
 
   connect(&Settings::Instance(), &Settings::ThemeChanged, this,
@@ -585,7 +588,7 @@ void CodeViewWidget::OnContextMenu()
   auto* show_target_memory =
       menu->addAction(tr("Show Target in Memor&y"), this, &CodeViewWidget::OnShowTargetInMemory);
   auto* copy_target_memory =
-      menu->addAction(tr("Copy Tar&get Sddress"), this, &CodeViewWidget::OnCopyTargetAddress);
+      menu->addAction(tr("Copy Tar&get Address"), this, &CodeViewWidget::OnCopyTargetAddress);
   menu->addSeparator();
 
   auto* symbol_rename_action =
@@ -1138,16 +1141,14 @@ void CodeViewWidget::ToggleBreakpoint()
 {
   m_system.GetPowerPC().GetBreakPoints().ToggleBreakPoint(GetContextAddress());
 
-  emit BreakpointsChanged();
-  Update();
+  emit Host::GetInstance()->PPCBreakpointsChanged();
 }
 
 void CodeViewWidget::AddBreakpoint()
 {
   m_system.GetPowerPC().GetBreakPoints().Add(GetContextAddress());
 
-  emit BreakpointsChanged();
-  Update();
+  emit Host::GetInstance()->PPCBreakpointsChanged();
 }
 
 u32 CodeViewWidget::GetContextAddress() const
