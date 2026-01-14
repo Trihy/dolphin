@@ -6,7 +6,12 @@
 #ifdef _WIN32
 #include <windows.h>
 
+#include <atomic>
+#include <vector>
+
 #include "Common/SocketContext.h"
+#include "Common/WindowsDevice.h"
+
 #include "Core/HW/WiimoteReal/WiimoteReal.h"
 #include "Core/USBUtils.h"
 
@@ -50,10 +55,18 @@ private:
 class WiimoteScannerWindows final : public WiimoteScannerBackend
 {
 public:
+  struct EnumeratedWiimoteInterface
+  {
+    std::wstring hid_iface;
+    std::optional<bool> is_balance_board;
+  };
+
   WiimoteScannerWindows();
   bool IsReady() const override;
-  void FindWiimotes(std::vector<Wiimote*>&, Wiimote*&) override;
-  void FindAttachedDevices(std::vector<Wiimote*>&, Wiimote*&) override;
+
+  FindResults FindNewWiimotes() override;
+  FindResults FindAttachedWiimotes() override;
+
   void Update() override;
   void RequestStopSearching() override {}
 
@@ -61,7 +74,13 @@ public:
   static void RemoveRememberedWiimotes();
 
 private:
-  void FindWiimoteHIDDevices(std::vector<Wiimote*>&, Wiimote*&);
+  FindResults FindWiimoteHIDDevices();
+
+  // This vector is updated after we receive a device change notification.
+  std::vector<EnumeratedWiimoteInterface> m_wiimote_hid_interfaces;
+  std::atomic_bool m_devices_changed{true};
+
+  Common::DeviceChangeNotification m_device_change_notification;
 };
 }  // namespace WiimoteReal
 

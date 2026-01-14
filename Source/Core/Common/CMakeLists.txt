@@ -52,6 +52,8 @@ add_library(common
   Debug/Threads.h
   Debug/Watches.cpp
   Debug/Watches.h
+  DirectIOFile.cpp
+  DirectIOFile.h
   DynamicLibrary.cpp
   DynamicLibrary.h
   ENet.cpp
@@ -111,10 +113,12 @@ add_library(common
   MinizipUtil.h
   MsgHandler.cpp
   MsgHandler.h
+  Mutex.h
   NandPaths.cpp
   NandPaths.h
   Network.cpp
   Network.h
+  OneShotEvent.h
   PcapFile.cpp
   PcapFile.h
   Profiler.cpp
@@ -179,7 +183,7 @@ PUBLIC
   enet::enet
   fmt::fmt
   MbedTLS::mbedtls
-  minizip-ng::minizip-ng
+  MINIZIP::minizip-ng
   sfml-network
 
 PRIVATE
@@ -223,8 +227,6 @@ endif()
 
 if(ANDROID)
   target_sources(common PRIVATE
-    AndroidAnalytics.cpp
-    AndroidAnalytics.h
     Logging/ConsoleListenerDroid.cpp
     MemArenaAndroid.cpp
   )
@@ -348,10 +350,6 @@ endif()
 
 if(USE_UPNP)
   target_link_libraries(common PRIVATE Miniupnpc::miniupnpc)
-endif()
-
-if(OPROFILE_FOUND)
-  target_link_libraries(common PRIVATE OProfile::OProfile)
 endif()
 
 if(ENABLE_LLVM)

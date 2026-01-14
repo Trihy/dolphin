@@ -281,6 +281,7 @@ void MenuBar::AddToolsMenu()
   usb_device_menu->addAction(tr("&Skylanders Portal"), this, &MenuBar::ShowSkylanderPortal);
   usb_device_menu->addAction(tr("&Infinity Base"), this, &MenuBar::ShowInfinityBase);
   usb_device_menu->addAction(tr("&Wii Speak"), this, &MenuBar::ShowWiiSpeakWindow);
+  usb_device_menu->addAction(tr("&Logitech USB Microphone"), this, &MenuBar::ShowLogitechMicWindow);
   tools_menu->addMenu(usb_device_menu);
 
   tools_menu->addSeparator();
@@ -295,8 +296,8 @@ void MenuBar::AddToolsMenu()
       tools_menu->addAction(tr("Achievements"), this, [this] { emit ShowAchievementsWindow(); });
 #ifdef RC_CLIENT_SUPPORTS_RAINTEGRATION
   m_achievements_dev_menu = tools_menu->addMenu(tr("RetroAchievements Development"));
-  m_raintegration_event_hook = AchievementManager::DevMenuUpdateEvent::Register(
-      [this] { QueueOnObject(this, [this] { UpdateAchievementDevelopmentMenu(); }); }, "MenuBar");
+  m_raintegration_event_hook = AchievementManager::GetInstance().dev_menu_update_event.Register(
+      [this] { QueueOnObject(this, [this] { UpdateAchievementDevelopmentMenu(); }); });
   m_achievements_dev_menu->menuAction()->setVisible(false);
 #endif  // RC_CLIENT_SUPPORTS_RAINTEGRATION
   tools_menu->addSeparator();

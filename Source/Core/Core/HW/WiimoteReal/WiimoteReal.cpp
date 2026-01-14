@@ -707,40 +707,36 @@ void WiimoteScanner::ThreadFunc()
     auto scan_mode = WiimoteScanMode::SCAN_ONCE;
     m_scan_mode.compare_exchange_strong(scan_mode, WiimoteScanMode::DO_NOT_SCAN);
 
+    // When not scanning we still look for already attached devices.
+    // This allows Windows, hidapi, and DolphinBar remotes to be quickly discovered.
+    const bool should_perform_inquiry = scan_mode != WiimoteScanMode::DO_NOT_SCAN;
+
     for (const auto& backend : m_backends)
     {
-      std::vector<Wiimote*> found_wiimotes;
-      Wiimote* found_board = nullptr;
-
-      // When not scanning we still look for already attached devices.
-      // This allows Windows and DolphinBar remotes to be quickly discovered.
-      if (scan_mode == WiimoteScanMode::DO_NOT_SCAN)
-        backend->FindAttachedDevices(found_wiimotes, found_board);
-      else
-        backend->FindWiimotes(found_wiimotes, found_board);
-
+      auto results =
+          should_perform_inquiry ? backend->FindNewWiimotes() : backend->FindAttachedWiimotes();
       {
         std::unique_lock wm_lk(g_wiimotes_mutex);
 
-        for (auto* wiimote : found_wiimotes)
+        for (auto& wiimote : results.wii_remotes)
         {
           {
             std::lock_guard lk(s_known_ids_mutex);
             s_known_ids.insert(wiimote->GetId());
           }
 
-          AddWiimoteToPool(std::unique_ptr<Wiimote>(wiimote));
+          AddWiimoteToPool(std::move(wiimote));
           g_controller_interface.PlatformPopulateDevices([] { ProcessWiimotePool(); });
         }
 
-        if (found_board)
+        for (auto& bboard : results.balance_boards)
         {
           {
             std::lock_guard lk(s_known_ids_mutex);
-            s_known_ids.insert(found_board->GetId());
+            s_known_ids.insert(bboard->GetId());
           }
 
-          TryToConnectBalanceBoard(std::unique_ptr<Wiimote>(found_board));
+          TryToConnectBalanceBoard(std::move(bboard));
         }
       }
     }
@@ -1019,12 +1015,14 @@ bool IsValidDeviceName(std::string_view name)
 
 bool IsWiimoteName(std::string_view name)
 {
-  return name == "Nintendo RVL-CNT-01" || name == "Nintendo RVL-CNT-01-TR";
+  // Wii software similarly checks just the start of the name.
+  return name.starts_with("Nintendo RVL-CNT");
 }
 
 bool IsBalanceBoardName(std::string_view name)
 {
-  return "Nintendo RVL-WBC-01" == name;
+  // Wii software similarly checks just the start of the name.
+  return name.starts_with("Nintendo RVL-WBC");
 }
 
 // This is called from the scanner backends (currently on the scanner thread).

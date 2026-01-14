@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <optional>
 #include <vector>
 
@@ -14,8 +15,11 @@
 #include <Hidclass.h>
 #include <Hidsdi.h>
 #include <initguid.h>
-// initguid.h must be included before Devpkey.h
-#include <Devpkey.h>
+#include <wtypes.h>
+// initguid.h must be included before devpkey.h
+#include <devpkey.h>
+// wtypes.h must be included before propkey.h
+#include <propkey.h>
 
 #include "Common/CommonFuncs.h"
 #include "Common/CommonTypes.h"
@@ -24,7 +28,6 @@
 #include "Common/ScopeGuard.h"
 #include "Common/StringUtil.h"
 #include "Common/Thread.h"
-#include "Common/WindowsDevice.h"
 
 #include "Core/HW/WiimoteCommon/DataReport.h"
 #include "Core/HW/WiimoteCommon/WiimoteConstants.h"
@@ -126,7 +129,7 @@ std::optional<USBUtils::DeviceInfo> GetDeviceInfo(const WCHAR* hid_iface)
   return USBUtils::DeviceInfo{attributes.VendorID, attributes.ProductID};
 }
 
-static std::optional<std::string> GetParentDeviceDescription(const WCHAR* hid_iface)
+static std::optional<DEVINST> GetInst(const WCHAR* hid_iface)
 {
   auto dev_inst_id =
       Common::GetDeviceInterfaceStringProperty(hid_iface, &DEVPKEY_Device_InstanceId);
@@ -142,6 +145,11 @@ static std::optional<std::string> GetParentDeviceDescription(const WCHAR* hid_if
     return std::nullopt;
   }
 
+  return dev_inst;
+}
+
+static std::optional<DEVINST> GetParentInst(DEVINST dev_inst)
+{
   DEVINST parent_inst{};
   if (CM_Get_Parent(&parent_inst, dev_inst, 0) != CR_SUCCESS)
   {
@@ -149,16 +157,42 @@ static std::optional<std::string> GetParentDeviceDescription(const WCHAR* hid_if
     return std::nullopt;
   }
 
-  const auto description =
-      Common::GetDevNodeStringProperty(parent_inst, &DEVPKEY_Device_BusReportedDeviceDesc);
-
-  if (description.has_value())
-    return WStringToUTF8(*description);
-
-  return std::nullopt;
+  return parent_inst;
 }
 
-void EnumerateRadios(std::invocable<EnumerationControl(HANDLE)> auto&& enumeration_callback)
+static std::optional<std::string> GetBluetoothName(DEVINST dev_inst)
+{
+  // Association Endpoint ID.
+  const auto aep_id_key = std::bit_cast<DEVPROPKEY>(PKEY_Devices_Aep_AepId);
+
+  // This provides a string like "Bluetooth#Bluetoothbc:fc:e7:2d:83:72-d8:6b:f7:32:db:46".
+  const auto aep_id = Common::GetDevNodeStringProperty(dev_inst, &aep_id_key);
+  if (!aep_id.has_value())
+    return std::nullopt;
+
+  // Traverse all siblings and find the "Bluetooth" class device with a matching AepID.
+  const auto parent_inst = GetParentInst(dev_inst);
+  if (!parent_inst.has_value())
+    return std::nullopt;
+
+  DEVINST child;
+  if (CM_Get_Child(&child, *parent_inst, 0) != CR_SUCCESS)
+    return std::nullopt;
+
+  while (true)
+  {
+    if (Common::GetDevNodeStringProperty(child, &DEVPKEY_Device_Class) == L"Bluetooth" &&
+        *aep_id == Common::GetDevNodeStringProperty(child, &aep_id_key))
+    {
+      return Common::GetDevNodeStringProperty(child, &DEVPKEY_NAME).transform(WStringToUTF8);
+    }
+
+    if (CM_Get_Sibling(&child, child, 0) != CR_SUCCESS)
+      return std::nullopt;
+  }
+}
+
+void EnumerateRadios(std::invocable<HANDLE> auto&& enumeration_callback)
 {
   constexpr BLUETOOTH_FIND_RADIO_PARAMS radio_params{
       .dwSize = sizeof(radio_params),
@@ -328,7 +362,12 @@ void WiimoteScannerWindows::RemoveRememberedWiimotes()
   NOTICE_LOG_FMT(WIIMOTE, "Removed remembered Wiimotes: {}", forget_count);
 }
 
-WiimoteScannerWindows::WiimoteScannerWindows() = default;
+WiimoteScannerWindows::WiimoteScannerWindows()
+{
+  m_device_change_notification.Register([this](Common::DeviceChangeNotification::EventType) {
+    m_devices_changed.store(true, std::memory_order_release);
+  });
+}
 
 void WiimoteScannerWindows::Update()
 {
@@ -576,40 +615,31 @@ int WiimoteWindows::IOWrite(const u8* buf, size_t len)
   return write_result;
 }
 
-void WiimoteScannerWindows::FindWiimoteHIDDevices(std::vector<Wiimote*>& found_wiimotes,
-                                                  Wiimote*& found_board)
+static std::vector<WiimoteScannerWindows::EnumeratedWiimoteInterface> GetAllWiimoteHIDInterfaces()
 {
+  std::vector<WiimoteScannerWindows::EnumeratedWiimoteInterface> results;
+
   // Enumerate connected HID interfaces IDs.
   auto class_guid = GUID_DEVINTERFACE_HID;
   constexpr ULONG flags = CM_GET_DEVICE_INTERFACE_LIST_PRESENT;
-  ULONG list_size = 0;
-  CM_Get_Device_Interface_List_Size(&list_size, &class_guid, nullptr, flags);
 
-  const auto buffer = std::make_unique_for_overwrite<WCHAR[]>(list_size);
-  const auto list_result =
-      CM_Get_Device_Interface_List(&class_guid, nullptr, buffer.get(), list_size, flags);
-  if (list_result != CR_SUCCESS)
+  for (auto* hid_iface : Common::GetDeviceInterfaceList(&class_guid, nullptr, flags))
   {
-    ERROR_LOG_FMT(WIIMOTE, "CM_Get_Device_Interface_List: {}", list_result);
-    return;
-  }
+    DEBUG_LOG_FMT(WIIMOTE, "Found HID interface.");
 
-  for (const WCHAR* hid_iface = buffer.get(); *hid_iface != L'\0';
-       hid_iface += wcslen(hid_iface) + 1)
-  {
-    // TODO: WiimoteWindows::GetId() does a redundant conversion.
-    const auto hid_iface_utf8 = WStringToUTF8(hid_iface);
-    DEBUG_LOG_FMT(WIIMOTE, "Found HID interface: {}", hid_iface_utf8);
+    const auto parent_inst = GetInst(hid_iface).and_then(GetParentInst);
 
-    // Are we already using this device?
-    if (!IsNewWiimote(hid_iface_utf8))
-      continue;
+    // This provies a proper name like "Nintendo RVL-CNT-01" or "Nintendo RVL-WBC-01".
+    const auto bluetooth_name = parent_inst.and_then(GetBluetoothName);
+    DEBUG_LOG_FMT(WIIMOTE, " BluetoothName: {}", bluetooth_name.value_or("<error>"));
 
-    // When connected via Bluetooth, this has a proper name like "Nintendo RVL-CNT-01".
-    const auto parent_description = GetParentDeviceDescription(hid_iface);
-
-    if (parent_description.has_value())
-      DEBUG_LOG_FMT(WIIMOTE, "HID description: {}", *parent_description);
+    // For some reason, a Balance Board `BusReportedDeviceDesc` is "Nintendo RVL-CNT-01".
+    const auto device_description =
+        parent_inst
+            .and_then(std::bind_back(Common::GetDevNodeStringProperty,
+                                     &DEVPKEY_Device_BusReportedDeviceDesc))
+            .transform(WStringToUTF8);
+    DEBUG_LOG_FMT(WIIMOTE, " BusReportedDeviceDesc: {}", device_description.value_or("<error>"));
 
     // Mayflash has confirmed in email that every revision of the DolphinBar
     //  advertises this descriptor and a VID:PID of 057e:0306.
@@ -626,22 +656,24 @@ void WiimoteScannerWindows::FindWiimoteHIDDevices(std::vector<Wiimote*>& found_w
     std::optional<bool> is_balance_board;
 
     bool is_relevant_description = false;
-    if (parent_description.has_value())
+    if (bluetooth_name.has_value())
     {
-      if (IsBalanceBoardName(*parent_description))
-      {
-        is_relevant_description = true;
-        is_balance_board = true;
-      }
-      else if (IsWiimoteName(*parent_description))
+      if (IsWiimoteName(*bluetooth_name))
       {
         is_relevant_description = true;
         is_balance_board = false;
       }
-      else if (*parent_description == dolphinbar_device_description)
+      else if (IsBalanceBoardName(*bluetooth_name))
       {
         is_relevant_description = true;
+        is_balance_board = true;
       }
+    }
+    else if (device_description.has_value() &&
+             (*device_description == dolphinbar_device_description ||
+              IsValidDeviceName(*device_description)))
+    {
+      is_relevant_description = true;
     }
 
     // Whelp, if the description didn't match, let's check the VID/PID ?
@@ -661,6 +693,27 @@ void WiimoteScannerWindows::FindWiimoteHIDDevices(std::vector<Wiimote*>& found_w
     }
 
     // Once here, we are confident that this is a Wii device.
+    results.push_back({hid_iface, is_balance_board});
+  }
+
+  return results;
+}
+
+auto WiimoteScannerWindows::FindWiimoteHIDDevices() -> FindResults
+{
+  if (m_devices_changed.exchange(false, std::memory_order_acquire))
+  {
+    m_wiimote_hid_interfaces = GetAllWiimoteHIDInterfaces();
+    INFO_LOG_FMT(WIIMOTE, "Found {} HID interface(s).", m_wiimote_hid_interfaces.size());
+  }
+
+  FindResults results;
+
+  for (auto& [hid_iface, is_balance_board] : m_wiimote_hid_interfaces)
+  {
+    // Are we already using this device?
+    if (!IsNewWiimote(WStringToUTF8(hid_iface)))
+      continue;
 
     DEBUG_LOG_FMT(WIIMOTE, "Creating WiimoteWindows");
 
@@ -678,26 +731,26 @@ void WiimoteScannerWindows::FindWiimoteHIDDevices(std::vector<Wiimote*>& found_w
       is_balance_board = wiimote->IsBalanceBoard();
 
     if (*is_balance_board)
-      delete std::exchange(found_board, wiimote.release());
+      results.balance_boards.emplace_back(std::move(wiimote));
     else
-      found_wiimotes.push_back(wiimote.release());
+      results.wii_remotes.emplace_back(std::move(wiimote));
   }
+
+  return results;
 }
 
-void WiimoteScannerWindows::FindWiimotes(std::vector<Wiimote*>&, Wiimote*&)
+auto WiimoteScannerWindows::FindNewWiimotes() -> FindResults
 {
   // Ideally we'd only enumerate the radios once.
   RemoveUnusableWiimoteBluetoothDevices();
   DiscoverAndPairWiimotes(DEFAULT_INQUIRY_LENGTH);
 
-  // Kinda odd that we never return any remotes here. The scanner interface is odd.
-  // We return all the results in FindAlreadyConnectedWiimote.
+  return FindWiimoteHIDDevices();
 }
 
-void WiimoteScannerWindows::FindAttachedDevices(std::vector<Wiimote*>& found_wiimotes,
-                                                Wiimote*& found_board)
+auto WiimoteScannerWindows::FindAttachedWiimotes() -> FindResults
 {
-  FindWiimoteHIDDevices(found_wiimotes, found_board);
+  return FindWiimoteHIDDevices();
 }
 
 bool WiimoteScannerWindows::IsReady() const
