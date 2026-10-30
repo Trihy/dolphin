@@ -4,6 +4,7 @@
 #include "Core/HW/MMIO.h"
 
 #include <functional>
+#include <utility>
 
 #include "Common/Assert.h"
 #include "Common/CommonTypes.h"
@@ -39,7 +40,7 @@ class ConstantHandlingMethod : public ReadHandlingMethod<T>
 {
 public:
   explicit ConstantHandlingMethod(T value) : value_(value) {}
-  virtual ~ConstantHandlingMethod() = default;
+  ~ConstantHandlingMethod() override = default;
   void AcceptReadVisitor(ReadHandlingMethodVisitor<T>& v) const override
   {
     v.VisitConstant(value_);
@@ -62,7 +63,7 @@ class NopHandlingMethod : public WriteHandlingMethod<T>
 {
 public:
   NopHandlingMethod() {}
-  virtual ~NopHandlingMethod() = default;
+  ~NopHandlingMethod() override = default;
   void AcceptWriteVisitor(WriteHandlingMethodVisitor<T>& v) const override { v.VisitNop(); }
 };
 template <typename T>
@@ -79,7 +80,7 @@ class DirectHandlingMethod : public ReadHandlingMethod<T>, public WriteHandlingM
 {
 public:
   DirectHandlingMethod(T* addr, u32 mask) : addr_(addr), mask_(mask) {}
-  virtual ~DirectHandlingMethod() = default;
+  ~DirectHandlingMethod() override = default;
   void AcceptReadVisitor(ReadHandlingMethodVisitor<T>& v) const override
   {
     v.VisitDirect(addr_, mask_);
@@ -113,16 +114,16 @@ class ComplexHandlingMethod : public ReadHandlingMethod<T>, public WriteHandling
 {
 public:
   explicit ComplexHandlingMethod(std::function<T(Core::System&, u32)> read_lambda)
-      : read_lambda_(read_lambda), write_lambda_(InvalidWriteLambda())
+      : read_lambda_(std::move(read_lambda)), write_lambda_(InvalidWriteLambda())
   {
   }
 
   explicit ComplexHandlingMethod(std::function<void(Core::System&, u32, T)> write_lambda)
-      : read_lambda_(InvalidReadLambda()), write_lambda_(write_lambda)
+      : read_lambda_(InvalidReadLambda()), write_lambda_(std::move(write_lambda))
   {
   }
 
-  virtual ~ComplexHandlingMethod() = default;
+  ~ComplexHandlingMethod() override = default;
   void AcceptReadVisitor(ReadHandlingMethodVisitor<T>& v) const override
   {
     v.VisitComplex(&read_lambda_);
@@ -159,12 +160,12 @@ private:
 template <typename T>
 ReadHandlingMethod<T>* ComplexRead(std::function<T(Core::System&, u32)> lambda)
 {
-  return new ComplexHandlingMethod<T>(lambda);
+  return new ComplexHandlingMethod<T>(std::move(lambda));
 }
 template <typename T>
 WriteHandlingMethod<T>* ComplexWrite(std::function<void(Core::System&, u32, T)> lambda)
 {
-  return new ComplexHandlingMethod<T>(lambda);
+  return new ComplexHandlingMethod<T>(std::move(lambda));
 }
 
 // Invalid: specialization of the complex handling type with lambdas that
@@ -263,7 +264,7 @@ ReadHandlingMethod<T>* ReadToLarger(Mapping* mmio, u32 larger_addr, u32 shift)
   });
 }
 
-// Inplementation of the ReadHandler and WriteHandler class. There is a lot of
+// Implementation of the ReadHandler and WriteHandler class. There is a lot of
 // redundant code between these two classes but trying to abstract it away
 // brings more trouble than it fixes.
 template <typename T>

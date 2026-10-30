@@ -3,8 +3,6 @@
 
 #include "DolphinQt/RenderWidget.h"
 
-#include <array>
-
 #include <QApplication>
 #include <QDragEnterEvent>
 #include <QDropEvent>
@@ -31,12 +29,10 @@
 
 #include "InputCommon/ControllerInterface/ControllerInterface.h"
 
-#include "VideoCommon/OnScreenUI.h"
 #include "VideoCommon/Present.h"
-#include "VideoCommon/VideoConfig.h"
 
 #ifdef _WIN32
-#include <Windows.h>
+#include <windows.h>
 #include <dwmapi.h>
 #endif
 
@@ -384,6 +380,10 @@ bool RenderWidget::event(QEvent* event)
     SetCursorLocked(false);
     break;
   case QEvent::MouseButtonPress:
+
+    // Grab focus to stop unwanted keyboard input UI interaction.
+    setFocus();
+
     if (isActiveWindow())
     {
       // Lock the cursor with any mouse button click (behave the same as window focus change).
@@ -467,21 +467,29 @@ bool RenderWidget::event(QEvent* event)
     SetCursorLocked(m_cursor_locked);
     break;
 
+#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
+  case QEvent::DevicePixelRatioChange:
+#else
   // According to https://bugreports.qt.io/browse/QTBUG-95925 the recommended practice for
   // handling DPI change is responding to paint events
   case QEvent::Paint:
+#endif
   case QEvent::Resize:
   {
     SetCursorLocked(m_cursor_locked);
 
-    const QResizeEvent* se = static_cast<QResizeEvent*>(event);
-    QSize new_size = se->size();
-
     QScreen* screen = window()->windowHandle()->screen();
 
     const float dpr = screen->devicePixelRatio();
-    const int width = new_size.width() * dpr;
-    const int height = new_size.height() * dpr;
+    int width = m_last_window_width;
+    int height = m_last_window_height;
+
+    if (event->type() == QEvent::Resize)
+    {
+      QSize new_size = static_cast<QResizeEvent*>(event)->size();
+      width = new_size.width();
+      height = new_size.height();
+    }
 
     if (m_last_window_width != width || m_last_window_height != height ||
         m_last_window_scale != dpr)

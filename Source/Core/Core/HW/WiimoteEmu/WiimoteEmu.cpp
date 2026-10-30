@@ -4,6 +4,7 @@
 #include "Core/HW/WiimoteEmu/WiimoteEmu.h"
 
 #include <algorithm>
+#include <fstream>
 #include <memory>
 #include <optional>
 #include <string_view>
@@ -22,6 +23,7 @@
 #include "Core/Core.h"
 #include "Core/HW/Wiimote.h"
 
+#include "Core/HW/WiimoteCommon/DataReport.h"
 #include "Core/HW/WiimoteCommon/WiimoteConstants.h"
 #include "Core/HW/WiimoteCommon/WiimoteHid.h"
 #include "Core/HW/WiimoteEmu/DesiredWiimoteState.h"
@@ -203,6 +205,8 @@ void Wiimote::Reset()
 
 Wiimote::Wiimote(const unsigned int index) : m_index(index), m_bt_device_index(index)
 {
+  m_speaker_logic.SetWiimoteIndex(m_index);
+
   using Translatability = ControllerEmu::Translatability;
 
   // Buttons
@@ -306,15 +310,9 @@ Wiimote::Wiimote(const unsigned int index) : m_index(index), m_bt_device_index(i
                         {SIDEWAYS_OPTION, nullptr, nullptr, _trans("Sideways Wii Remote")}, false);
 
   Reset();
-
-  m_config_changed_callback_id = Config::AddConfigChangedCallback([this] { RefreshConfig(); });
-  RefreshConfig();
 }
 
-Wiimote::~Wiimote()
-{
-  Config::RemoveConfigChangedCallback(m_config_changed_callback_id);
-}
+Wiimote::~Wiimote() = default;
 
 std::string Wiimote::GetName() const
 {
@@ -497,7 +495,7 @@ void Wiimote::BuildDesiredWiimoteState(DesiredWiimoteState* target_state,
       ConvertAccelData(GetTotalAcceleration(), ACCEL_ZERO_G << 2, ACCEL_ONE_G << 2);
 
   // Calculate IR camera state.
-  if (m_ir_passthrough->enabled)
+  if (m_ir_passthrough->enabled.GetValue() && m_ir_passthrough->AreInputsBound())
   {
     target_state->camera_points = GetPassthroughCameraPoints(m_ir_passthrough);
   }
@@ -821,11 +819,6 @@ void Wiimote::SetRumble(bool on)
 {
   const auto lock = GetStateLock();
   m_rumble->controls.front()->control_ref->State(on);
-}
-
-void Wiimote::RefreshConfig()
-{
-  m_speaker_logic.SetSpeakerEnabled(Config::Get(Config::MAIN_WIIMOTE_ENABLE_SPEAKER));
 }
 
 void Wiimote::StepDynamics()

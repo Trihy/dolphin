@@ -3,22 +3,26 @@
 
 #include "Common/TimeUtil.h"
 
+#include <cstring>
 #include <ctime>
 #include <optional>
 
+#include "Common/Logging/Log.h"
+
 namespace Common
 {
-std::optional<std::tm> Localtime(std::time_t time)
+std::optional<std::tm> LocalTime(std::time_t time)
 {
   std::tm local_time;
 #ifdef _MSC_VER
   if (localtime_s(&local_time, &time) != 0)
-    return std::nullopt;
 #else
-  std::tm* result = localtime_r(&time, &local_time);
-  if (result != &local_time)
-    return std::nullopt;
+  if (localtime_r(&time, &local_time) == nullptr)
 #endif
+  {
+    ERROR_LOG_FMT(COMMON, "Failed to convert time to local time: {}", std::strerror(errno));
+    return std::nullopt;
+  }
   return local_time;
 }
 }  // Namespace Common

@@ -41,7 +41,7 @@ class GCMemcardManager : public QDialog
   Q_OBJECT
 public:
   explicit GCMemcardManager(QWidget* parent = nullptr);
-  ~GCMemcardManager();
+  ~GCMemcardManager() override;
 
   static QString GetErrorMessagesForErrorCode(const Memcard::GCMemcardErrorCode& code);
   static QString GetErrorMessageForErrorCode(Memcard::ReadSavefileErrorCode code);
@@ -55,7 +55,7 @@ private:
 
   void UpdateActions();
   void UpdateSlotTable(ExpansionInterface::Slot slot);
-  void SetSlotFile(ExpansionInterface::Slot slot, QString path);
+  void SetSlotFile(ExpansionInterface::Slot slot, const QString& path);
   void SetSlotFileInteractive(ExpansionInterface::Slot slot);
   void SetActiveSlot(ExpansionInterface::Slot slot);
 

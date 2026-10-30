@@ -22,9 +22,9 @@ void MigrateFromMemcardFile(const std::string& directory_name, ExpansionInterfac
 class GCMemcardDirectory : public MemoryCardBase
 {
 public:
-  GCMemcardDirectory(const std::string& directory, ExpansionInterface::Slot slot,
+  GCMemcardDirectory(std::string directory, ExpansionInterface::Slot slot,
                      const Memcard::HeaderData& header_data, u32 game_id);
-  ~GCMemcardDirectory();
+  ~GCMemcardDirectory() override;
 
   GCMemcardDirectory(const GCMemcardDirectory&) = delete;
   GCMemcardDirectory& operator=(const GCMemcardDirectory&) = delete;

@@ -10,11 +10,9 @@
 #include <cubeb/cubeb.h>
 
 #include "AudioCommon/CubebUtils.h"
-#include "Common/Common.h"
+#include "Common/BitUtils.h"
 #include "Common/CommonTypes.h"
-#include "Common/Event.h"
 #include "Common/Logging/Log.h"
-#include "Common/ScopeGuard.h"
 
 #include "Core/CoreTiming.h"
 #include "Core/HW/EXI/EXI.h"
@@ -23,27 +21,26 @@
 #include "Core/System.h"
 
 #ifdef _WIN32
-#include <Objbase.h>
+#include <objbase.h>
 #endif
 
 namespace ExpansionInterface
 {
 void CEXIMic::StreamInit()
 {
-  stream_buffer = nullptr;
-  samples_avail = stream_wpos = stream_rpos = 0;
+  m_stream_buffer.clear();
+  m_samples_avail = 0;
+  m_stream_wpos = 0;
+  m_stream_rpos = 0;
 
 #ifdef _WIN32
   if (!m_coinit_success)
     return;
-  Common::Event sync_event;
-  m_work_queue.Push([this, &sync_event] {
-    Common::ScopeGuard sync_event_guard([&sync_event] { sync_event.Set(); });
+  m_work_queue.PushBlocking([this] {
 #endif
     m_cubeb_ctx = CubebUtils::GetContext();
 #ifdef _WIN32
   });
-  sync_event.Wait();
 #endif
 }
 
@@ -56,14 +53,11 @@ void CEXIMic::StreamTerminate()
 #ifdef _WIN32
     if (!m_coinit_success)
       return;
-    Common::Event sync_event;
-    m_work_queue.Push([this, &sync_event] {
-      Common::ScopeGuard sync_event_guard([&sync_event] { sync_event.Set(); });
+    m_work_queue.PushBlocking([this] {
 #endif
       m_cubeb_ctx.reset();
 #ifdef _WIN32
     });
-    sync_event.Wait();
 #endif
   }
 }
@@ -77,20 +71,20 @@ long CEXIMic::DataCallback(cubeb_stream* stream, void* user_data, const void* in
 {
   CEXIMic* mic = static_cast<CEXIMic*>(user_data);
 
-  std::lock_guard lk(mic->ring_lock);
+  std::lock_guard lk(mic->m_ring_lock);
 
   const s16* buff_in = static_cast<const s16*>(input_buffer);
   for (long i = 0; i < nframes; i++)
   {
-    mic->stream_buffer[mic->stream_wpos] = buff_in[i];
-    mic->stream_wpos = (mic->stream_wpos + 1) % mic->stream_size;
+    mic->m_stream_buffer[mic->m_stream_wpos] = buff_in[i];
+    mic->m_stream_wpos = (mic->m_stream_wpos + 1) % mic->m_stream_size;
   }
 
-  mic->samples_avail += nframes;
-  if (mic->samples_avail > mic->stream_size)
+  mic->m_samples_avail += nframes;
+  if (mic->m_samples_avail > mic->m_stream_size)
   {
-    mic->samples_avail = 0;
-    mic->status.buff_ovrflw = 1;
+    mic->m_samples_avail = 0;
+    mic->m_status.buff_ovrflw = 1;
   }
 
   return nframes;
@@ -104,17 +98,15 @@ void CEXIMic::StreamStart()
 #ifdef _WIN32
   if (!m_coinit_success)
     return;
-  Common::Event sync_event;
-  m_work_queue.Push([this, &sync_event] {
-    Common::ScopeGuard sync_event_guard([&sync_event] { sync_event.Set(); });
+  m_work_queue.PushBlocking([this] {
 #endif
     // Open stream with current parameters
-    stream_size = buff_size_samples * 500;
-    stream_buffer = new s16[stream_size];
+    m_stream_size = m_buff_size_samples * 500;
+    m_stream_buffer.reset(m_stream_size);
 
     cubeb_stream_params params{};
     params.format = CUBEB_SAMPLE_S16LE;
-    params.rate = sample_rate;
+    params.rate = m_sample_rate;
     params.channels = 1;
     params.layout = CUBEB_LAYOUT_MONO;
 
@@ -126,8 +118,8 @@ void CEXIMic::StreamStart()
 
     if (cubeb_stream_init(m_cubeb_ctx.get(), &m_cubeb_stream,
                           "Dolphin Emulated GameCube Microphone", nullptr, &params, nullptr,
-                          nullptr, std::max<u32>(buff_size_samples, minimum_latency), DataCallback,
-                          state_callback, this) != CUBEB_OK)
+                          nullptr, std::max<u32>(m_buff_size_samples, minimum_latency),
+                          DataCallback, state_callback, this) != CUBEB_OK)
     {
       ERROR_LOG_FMT(EXPANSIONINTERFACE, "Error initializing cubeb stream");
       return;
@@ -142,7 +134,6 @@ void CEXIMic::StreamStart()
     INFO_LOG_FMT(EXPANSIONINTERFACE, "started cubeb stream");
 #ifdef _WIN32
   });
-  sync_event.Wait();
 #endif
 }
 
@@ -151,9 +142,7 @@ void CEXIMic::StreamStop()
   if (m_cubeb_stream)
   {
 #ifdef _WIN32
-    Common::Event sync_event;
-    m_work_queue.Push([this, &sync_event] {
-      Common::ScopeGuard sync_event_guard([&sync_event] { sync_event.Set(); });
+    m_work_queue.PushBlocking([this] {
 #endif
       if (cubeb_stream_stop(m_cubeb_stream) != CUBEB_OK)
         ERROR_LOG_FMT(EXPANSIONINTERFACE, "Error stopping cubeb stream");
@@ -161,29 +150,29 @@ void CEXIMic::StreamStop()
       m_cubeb_stream = nullptr;
 #ifdef _WIN32
     });
-    sync_event.Wait();
 #endif
   }
 
-  samples_avail = stream_wpos = stream_rpos = 0;
+  m_samples_avail = 0;
+  m_stream_wpos = 0;
+  m_stream_rpos = 0;
 
-  delete[] stream_buffer;
-  stream_buffer = nullptr;
+  m_stream_buffer.clear();
 }
 
 void CEXIMic::StreamReadOne()
 {
-  std::lock_guard lk(ring_lock);
+  std::lock_guard lk(m_ring_lock);
 
-  if (samples_avail >= buff_size_samples)
+  if (m_samples_avail >= m_buff_size_samples)
   {
-    s16* last_buffer = &stream_buffer[stream_rpos];
-    std::memcpy(ring_buffer, last_buffer, buff_size);
+    s16* last_buffer = &m_stream_buffer[m_stream_rpos];
+    std::memcpy(m_ring_buffer.data(), last_buffer, m_buff_size);
 
-    samples_avail -= buff_size_samples;
+    m_samples_avail -= m_buff_size_samples;
 
-    stream_rpos += buff_size_samples;
-    stream_rpos %= stream_size;
+    m_stream_rpos += m_buff_size_samples;
+    m_stream_rpos %= m_stream_size;
   }
 }
 
@@ -193,38 +182,19 @@ void CEXIMic::StreamReadOne()
 // buffer size settings. When the console handles the interrupt, it will send
 // cmdGetBuffer, which is when we actually read data from a buffer filled
 // in the background.
-
-u8 const CEXIMic::exi_id[] = {0, 0x0a, 0, 0, 0};
-
 CEXIMic::CEXIMic(Core::System& system, int index)
-    : IEXIDevice(system), slot(index)
+    : IEXIDevice(system), m_slot(index)
 #ifdef _WIN32
       ,
       m_work_queue("Mic Worker")
 #endif
 {
-  m_position = 0;
-  command = 0;
-  status.U16 = 0;
-
-  sample_rate = rate_base;
-  buff_size = ring_base;
-  buff_size_samples = buff_size / sample_size;
-
-  ring_pos = 0;
-  std::memset(ring_buffer, 0, sizeof(ring_buffer));
-
-  next_int_ticks = 0;
-
 #ifdef _WIN32
-  Common::Event sync_event;
-  m_work_queue.Push([this, &sync_event] {
-    Common::ScopeGuard sync_event_guard([&sync_event] { sync_event.Set(); });
+  m_work_queue.PushBlocking([this] {
     auto result = ::CoInitializeEx(nullptr, COINIT_MULTITHREADED | COINIT_DISABLE_OLE1DDE);
     m_coinit_success = result == S_OK;
     m_should_couninit = result == S_OK || result == S_FALSE;
   });
-  sync_event.Wait();
 #endif
 
   StreamInit();
@@ -237,13 +207,10 @@ CEXIMic::~CEXIMic()
 #ifdef _WIN32
   if (m_should_couninit)
   {
-    Common::Event sync_event;
-    m_work_queue.Push([this, &sync_event] {
-      Common::ScopeGuard sync_event_guard([&sync_event] { sync_event.Set(); });
+    m_work_queue.PushBlocking([this] {
       m_should_couninit = false;
       CoUninitialize();
     });
-    sync_event.Wait();
   }
   m_coinit_success = false;
 #endif
@@ -264,73 +231,85 @@ void CEXIMic::SetCS(int cs)
 
 void CEXIMic::UpdateNextInterruptTicks()
 {
-  int diff = (m_system.GetSystemTimers().GetTicksPerSecond() / sample_rate) * buff_size_samples;
-  next_int_ticks = m_system.GetCoreTiming().GetTicks() + diff;
+  const int diff =
+      (m_system.GetSystemTimers().GetTicksPerSecond() / m_sample_rate) * m_buff_size_samples;
+  m_next_int_ticks = m_system.GetCoreTiming().GetTicks() + diff;
   m_system.GetExpansionInterface().ScheduleUpdateInterrupts(CoreTiming::FromThread::CPU, diff);
 }
 
 bool CEXIMic::IsInterruptSet()
 {
-  if (next_int_ticks && m_system.GetCoreTiming().GetTicks() >= next_int_ticks)
-  {
-    if (status.is_active)
-      UpdateNextInterruptTicks();
-    else
-      next_int_ticks = 0;
-
-    return true;
-  }
-  else
-  {
+  if (m_next_int_ticks == 0 || m_system.GetCoreTiming().GetTicks() < m_next_int_ticks)
     return false;
-  }
+
+  if (m_status.is_active)
+    UpdateNextInterruptTicks();
+  else
+    m_next_int_ticks = 0;
+
+  return true;
 }
 
 void CEXIMic::TransferByte(u8& byte)
 {
   if (m_position == 0)
   {
-    command = byte;  // first byte is command
-    byte = 0xFF;     // would be tristate, but we don't care.
+    m_command = byte;  // first byte is command
+    byte = 0xFF;       // would be tristate, but we don't care.
     m_position++;
     return;
   }
 
-  int pos = m_position - 1;
+  const u32 pos = m_position - 1;
 
-  switch (command)
+  switch (m_command)
   {
   case cmdID:
-    byte = exi_id[pos];
+    if (pos >= EXI_ID.size())
+    {
+      ERROR_LOG_FMT(EXPANSIONINTERFACE, "ID command will overflow, pos={}", pos);
+      break;
+    }
+    byte = EXI_ID[pos];
     break;
 
   case cmdGetStatus:
+    if (pos >= sizeof(m_status))
+    {
+      ERROR_LOG_FMT(EXPANSIONINTERFACE, "GetStatus command will overflow, pos={}", pos);
+      break;
+    }
     if (pos == 0)
-      status.button = Pad::GetMicButton(slot);
+      m_status.button = Pad::GetMicButton(m_slot);
 
-    byte = status.U8[pos ^ 1];
+    byte = Common::BitCastPtr<u8>(&m_status)[pos ^ 1];
 
     if (pos == 1)
-      status.buff_ovrflw = 0;
+      m_status.buff_ovrflw = 0;
     break;
 
   case cmdSetStatus:
   {
-    bool wasactive = status.is_active;
-    status.U8[pos ^ 1] = byte;
+    if (pos >= sizeof(m_status))
+    {
+      ERROR_LOG_FMT(EXPANSIONINTERFACE, "SetStatus command will overflow, pos={}", pos);
+      break;
+    }
+    const bool was_active = m_status.is_active;
+    Common::BitCastPtr<u8>(&m_status)[pos ^ 1] = byte;
 
     // safe to do since these can only be entered if both bytes of status have been written
-    if (!wasactive && status.is_active)
+    if (!was_active && m_status.is_active)
     {
-      sample_rate = rate_base << status.sample_rate;
-      buff_size = ring_base << status.buff_size;
-      buff_size_samples = buff_size / sample_size;
+      m_sample_rate = RATE_BASE << m_status.sample_rate;
+      m_buff_size = RING_BASE << m_status.buff_size;
+      m_buff_size_samples = m_buff_size / SAMPLE_SIZE;
 
       UpdateNextInterruptTicks();
 
       StreamStart();
     }
-    else if (wasactive && !status.is_active)
+    else if (was_active && !m_status.is_active)
     {
       StreamStop();
     }
@@ -339,16 +318,16 @@ void CEXIMic::TransferByte(u8& byte)
 
   case cmdGetBuffer:
   {
-    if (ring_pos == 0)
+    if (m_ring_pos == 0)
       StreamReadOne();
 
-    byte = ring_buffer[ring_pos ^ 1];
-    ring_pos = (ring_pos + 1) % buff_size;
+    byte = m_ring_buffer[m_ring_pos ^ 1];
+    m_ring_pos = (m_ring_pos + 1) % m_buff_size;
   }
   break;
 
   default:
-    ERROR_LOG_FMT(EXPANSIONINTERFACE, "EXI MIC: unknown command byte {:02x}", command);
+    ERROR_LOG_FMT(EXPANSIONINTERFACE, "EXI MIC: unknown command byte {:02x}", m_command);
     break;
   }
 

@@ -12,7 +12,6 @@
 
 namespace ControllerEmu
 {
-class ControllerEmu;
 class Buttons;
 }  // namespace ControllerEmu
 
@@ -74,6 +73,7 @@ enum Hotkey
   HK_BALANCEBOARD_CONNECT,
   HK_TOGGLE_SD_CARD,
   HK_TOGGLE_USB_KEYBOARD,
+  HK_TOGGLE_WII_SPEAK_MUTE,
 
   HK_NEXT_WIIMOTE_PROFILE_1,
   HK_PREV_WIIMOTE_PROFILE_1,
@@ -92,7 +92,8 @@ enum Hotkey
   HK_NEXT_GAME_WIIMOTE_PROFILE_4,
   HK_PREV_GAME_WIIMOTE_PROFILE_4,
 
-  HK_TOGGLE_CROP,
+  HK_TOGGLE_CROP_TO_ASPECT_RATIO,
+  HK_TOGGLE_CROP_CUSTOM,
   HK_TOGGLE_AR,
   HK_TOGGLE_SKIP_EFB_ACCESS,
   HK_TOGGLE_EFBCOPIES,
@@ -107,8 +108,8 @@ enum Hotkey
 
   HK_FREELOOK_TOGGLE,
 
-  HK_TOGGLE_STEREO_SBS,
-  HK_TOGGLE_STEREO_TAB,
+  HK_TOGGLE_STEREO_SIDE_BY_SIDE,
+  HK_TOGGLE_STEREO_TOP_AND_BOTTOM,
   HK_TOGGLE_STEREO_ANAGLYPH,
 
   HK_DECREASE_DEPTH,
@@ -232,7 +233,7 @@ class HotkeyManager : public ControllerEmu::EmulatedController
 {
 public:
   HotkeyManager();
-  ~HotkeyManager();
+  ~HotkeyManager() override;
 
   void GetInput(HotkeyStatus* hk, bool ignore_focus);
   std::string GetName() const override;

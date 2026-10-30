@@ -25,9 +25,9 @@ class WatchWidget : public QDockWidget
   Q_OBJECT
 public:
   explicit WatchWidget(QWidget* parent = nullptr);
-  ~WatchWidget();
+  ~WatchWidget() override;
 
-  void AddWatch(QString name, u32 addr);
+  void AddWatch(const QString& name, u32 addr);
 signals:
   void RequestMemoryBreakpoint(u32 addr);
   void ShowMemory(u32 addr);

@@ -11,11 +11,11 @@
 #include "Common/Common.h"
 #include "Common/Config/Config.h"
 
+#include "Core/HW/WiimoteCommon/WiimoteHid.h"
 #include "Core/HW/WiimoteCommon/WiimoteReport.h"
 
 #include "Core/HW/WiimoteEmu/Camera.h"
 #include "Core/HW/WiimoteEmu/Dynamics.h"
-#include "Core/HW/WiimoteEmu/Encryption.h"
 #include "Core/HW/WiimoteEmu/ExtensionPort.h"
 #include "Core/HW/WiimoteEmu/I2CBus.h"
 #include "Core/HW/WiimoteEmu/MotionPlus.h"
@@ -137,7 +137,7 @@ public:
   static constexpr const char* SIDEWAYS_OPTION = "Sideways Wiimote";
 
   explicit Wiimote(unsigned int index);
-  ~Wiimote();
+  ~Wiimote() override;
 
   std::string GetName() const override;
 
@@ -186,8 +186,6 @@ private:
   // static constexpr int EEPROM_SIZE = 16 * 1024;
   // This is the region exposed over bluetooth:
   static constexpr int EEPROM_FREE_SIZE = 0x1700;
-
-  void RefreshConfig();
 
   void StepDynamics();
   void UpdateButtonsStatus(const DesiredWiimoteState& target_state);
@@ -348,7 +346,5 @@ private:
   PositionalState m_shake_state;
 
   IMUCursorState m_imu_cursor_state;
-
-  Config::ConfigChangedCallbackID m_config_changed_callback_id;
 };
 }  // namespace WiimoteEmu

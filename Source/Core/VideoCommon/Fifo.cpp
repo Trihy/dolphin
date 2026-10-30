@@ -54,9 +54,16 @@ void FifoManager::DoState(PointerWrap& p)
 {
   p.DoArray(m_video_buffer, FIFO_SIZE);
   u8* write_ptr = m_video_buffer_write_ptr;
-  p.DoPointer(write_ptr, m_video_buffer);
+  if (!p.DoPointer(write_ptr, m_video_buffer, FIFO_SIZE))
+    return;
   m_video_buffer_write_ptr = write_ptr;
-  p.DoPointer(m_video_buffer_read_ptr, m_video_buffer);
+  if (!p.DoPointer(m_video_buffer_read_ptr, m_video_buffer, FIFO_SIZE))
+    return;
+  if (p.IsReadMode() && m_video_buffer_read_ptr > write_ptr)
+  {
+    p.SetMeasureMode();
+    return;
+  }
   if (p.IsReadMode() && m_use_deterministic_gpu_thread)
   {
     // We're good and paused, right?
@@ -67,23 +74,21 @@ void FifoManager::DoState(PointerWrap& p)
   p.Do(m_syncing_suspended);
 }
 
-void FifoManager::PauseAndLock(bool do_lock, bool unpause_on_unlock)
+void FifoManager::PauseAndLock()
 {
-  if (do_lock)
-  {
-    SyncGPU(SyncGPUReason::Other);
-    EmulatorState(false);
+  SyncGPU(SyncGPUReason::Other);
+  EmulatorState(false);
 
-    if (!m_system.IsDualCoreMode() || m_use_deterministic_gpu_thread)
-      return;
+  if (!m_system.IsDualCoreMode() || m_use_deterministic_gpu_thread)
+    return;
 
-    m_gpu_mainloop.WaitYield(std::chrono::milliseconds(100), Host_YieldToUI);
-  }
-  else
-  {
-    if (unpause_on_unlock)
-      EmulatorState(true);
-  }
+  m_gpu_mainloop.WaitYield(std::chrono::milliseconds(100), Host_YieldToUI);
+}
+
+void FifoManager::RestoreState(const bool was_running)
+{
+  if (was_running)
+    EmulatorState(true);
 }
 
 void FifoManager::Init()
@@ -287,9 +292,6 @@ void FifoManager::ResetVideoBuffer()
 // Purpose: Keep the Core HW updated about the CPU-GPU distance
 void FifoManager::RunGpuLoop()
 {
-  AsyncRequests::GetInstance()->SetEnable(true);
-  AsyncRequests::GetInstance()->SetPassthrough(false);
-
   m_gpu_mainloop.Run(
       [this] {
         // Run events from the CPU thread.
@@ -391,9 +393,6 @@ void FifoManager::RunGpuLoop()
         }
       },
       100);
-
-  AsyncRequests::GetInstance()->SetEnable(false);
-  AsyncRequests::GetInstance()->SetPassthrough(true);
 }
 
 void FifoManager::FlushGpu()

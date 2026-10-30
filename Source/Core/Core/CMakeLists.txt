@@ -70,7 +70,6 @@ add_library(core
   Debugger/Debugger_SymbolMap.h
   Debugger/Dump.cpp
   Debugger/Dump.h
-  Debugger/GCELF.h
   Debugger/OSThread.cpp
   Debugger/OSThread.h
   Debugger/PPCDebugInterface.cpp
@@ -123,8 +122,6 @@ add_library(core
   FifoPlayer/FifoPlayer.h
   FifoPlayer/FifoRecorder.cpp
   FifoPlayer/FifoRecorder.h
-  FreeLookConfig.cpp
-  FreeLookConfig.h
   FreeLookManager.cpp
   FreeLookManager.h
   GeckoCode.cpp
@@ -183,6 +180,8 @@ add_library(core
   HW/DSPLLE/DSPSymbols.h
   HW/DVD/DVDInterface.cpp
   HW/DVD/DVDInterface.h
+  HW/DVD/AMMediaboard.cpp
+  HW/DVD/AMMediaboard.h
   HW/DVD/DVDMath.cpp
   HW/DVD/DVDMath.h
   HW/DVD/DVDThread.cpp
@@ -250,10 +249,18 @@ add_library(core
   HW/HSP/HSP_Device.h
   HW/HSP/HSP_DeviceARAMExpansion.cpp
   HW/HSP/HSP_DeviceARAMExpansion.h
+  HW/HSP/HSP_DeviceGBPlayer.cpp
+  HW/HSP/HSP_DeviceGBPlayer.h
   HW/HSP/HSP_DeviceNull.cpp
   HW/HSP/HSP_DeviceNull.h
   HW/HW.cpp
   HW/HW.h
+  HW/MagCard/C1231BR.cpp
+  HW/MagCard/C1231BR.h
+  HW/MagCard/C1231LR.cpp
+  HW/MagCard/C1231LR.h
+  HW/MagCard/MagneticCardReader.cpp
+  HW/MagCard/MagneticCardReader.h
   HW/Memmap.cpp
   HW/Memmap.h
   HW/MemoryInterface.cpp
@@ -276,6 +283,8 @@ add_library(core
   HW/SI/SI_DeviceGCSteeringWheel.h
   HW/SI/SI_DeviceKeyboard.cpp
   HW/SI/SI_DeviceKeyboard.h
+  HW/SI/SI_DeviceAMBaseboard.cpp
+  HW/SI/SI_DeviceAMBaseboard.h
   HW/SI/SI_DeviceNull.cpp
   HW/SI/SI_DeviceNull.h
   HW/SI/SI.cpp
@@ -286,6 +295,22 @@ add_library(core
   HW/StreamADPCM.h
   HW/SystemTimers.cpp
   HW/SystemTimers.h
+  HW/Triforce/DeckReader.cpp
+  HW/Triforce/DeckReader.h
+  HW/Triforce/FZeroAX.cpp
+  HW/Triforce/FZeroAX.h
+  HW/Triforce/ICCardReader.cpp
+  HW/Triforce/ICCardReader.h
+  HW/Triforce/IOPorts.cpp
+  HW/Triforce/IOPorts.h
+  HW/Triforce/JVSIO.cpp
+  HW/Triforce/JVSIO.h
+  HW/Triforce/MarioKartGP.cpp
+  HW/Triforce/MarioKartGP.h
+  HW/Triforce/SerialDevice.cpp
+  HW/Triforce/SerialDevice.h
+  HW/Triforce/Touchscreen.cpp
+  HW/Triforce/Touchscreen.h
   HW/VideoInterface.cpp
   HW/VideoInterface.h
   HW/WII_IPC.cpp
@@ -429,12 +454,18 @@ add_library(core
   IOS/USB/Common.h
   IOS/USB/Emulated/Infinity.cpp
   IOS/USB/Emulated/Infinity.h
+  IOS/USB/Emulated/Microphone.cpp
+  IOS/USB/Emulated/Microphone.h
   IOS/USB/Emulated/Skylanders/Skylander.cpp
   IOS/USB/Emulated/Skylanders/Skylander.h
   IOS/USB/Emulated/Skylanders/SkylanderCrypto.cpp
   IOS/USB/Emulated/Skylanders/SkylanderCrypto.h
   IOS/USB/Emulated/Skylanders/SkylanderFigure.cpp
   IOS/USB/Emulated/Skylanders/SkylanderFigure.h
+  IOS/USB/Emulated/WiiSpeak.cpp
+  IOS/USB/Emulated/WiiSpeak.h
+  IOS/USB/Emulated/LogitechMic.cpp
+  IOS/USB/Emulated/LogitechMic.h
   IOS/USB/Host.cpp
   IOS/USB/Host.h
   IOS/USB/OH0/OH0.cpp
@@ -504,6 +535,8 @@ add_library(core
   PowerPC/Interpreter/Interpreter_Tables.cpp
   PowerPC/Interpreter/Interpreter.cpp
   PowerPC/Interpreter/Interpreter.h
+  PowerPC/JitCommon/ConstantPropagation.cpp
+  PowerPC/JitCommon/ConstantPropagation.h
   PowerPC/JitCommon/DivUtils.cpp
   PowerPC/JitCommon/DivUtils.h
   PowerPC/JitCommon/JitAsmCommon.cpp
@@ -547,6 +580,8 @@ add_library(core
   TimePlayed.h
   TitleDatabase.cpp
   TitleDatabase.h
+  USBUtils.cpp
+  USBUtils.h
   WC24PatchEngine.cpp
   WC24PatchEngine.h
   WiiRoot.cpp
@@ -554,6 +589,20 @@ add_library(core
   WiiUtils.cpp
   WiiUtils.h
 )
+
+add_custom_command(
+  OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/AchievementApprovedHash.h
+  COMMAND ${CMAKE_COMMAND}
+          -DJSON_FILE=${CMAKE_SOURCE_DIR}/Data/Sys/ApprovedInis.json
+          -DTEMPLATE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/AchievementApprovedHash.h.in
+          -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/AchievementApprovedHash.h
+          -P ${CMAKE_SOURCE_DIR}/CMake/GenerateAchievementHash.cmake
+  DEPENDS ${CMAKE_SOURCE_DIR}/Data/Sys/ApprovedInis.json
+          ${CMAKE_CURRENT_SOURCE_DIR}/AchievementApprovedHash.h.in
+  COMMENT "Generating AchievementApprovedHash.h"
+)
+
+target_sources(core PRIVATE AchievementApprovedHash.h)
 
 if(_M_X86_64)
   target_sources(core PRIVATE
@@ -642,7 +691,6 @@ PUBLIC
   inputcommon
   MbedTLS::mbedtls
   pugixml
-  RangeSet::RangeSet
   sfml-network
   videonull
   videoogl
@@ -691,6 +739,10 @@ if(TARGET LibUSB::LibUSB)
     IOS/USB/LibusbDevice.h
     IOS/USB/Bluetooth/BTReal.cpp
     IOS/USB/Bluetooth/BTReal.h
+    IOS/USB/Bluetooth/LibUSBBluetoothAdapter.cpp
+    IOS/USB/Bluetooth/LibUSBBluetoothAdapter.h
+    IOS/USB/Bluetooth/RealtekFirmwareLoader.cpp
+    IOS/USB/Bluetooth/RealtekFirmwareLoader.h
   )
 endif()
 
@@ -745,7 +797,7 @@ elseif(UNIX)
 endif()
 
 # Bluez doesn't support all the communication modes on FreeBSD, so only using it on Linux
-if(CMAKE_SYSTEM_NAME MATCHES "Linux")
+if(LINUX)
   option(ENABLE_BLUEZ "Enables bluetooth support" ON)
   if(ENABLE_BLUEZ)
     find_package(BlueZ)
@@ -785,6 +837,11 @@ if(UNIX)
     MemoryWatcher.cpp
     MemoryWatcher.h
   )
+endif()
+
+if(TARGET cpp-ipc::ipc)
+  target_sources(core PRIVATE HW/EXI/BBA/IPC.cpp)
+  target_link_libraries(core PRIVATE cpp-ipc::ipc)
 endif()
 
 if(MSVC)

@@ -19,6 +19,7 @@ import org.dolphinemu.dolphinemu.NativeLibrary
 import org.dolphinemu.dolphinemu.R
 import org.dolphinemu.dolphinemu.activities.EmulationActivity
 import org.dolphinemu.dolphinemu.databinding.FragmentIngameMenuBinding
+import org.dolphinemu.dolphinemu.features.settings.model.AchievementModel
 import org.dolphinemu.dolphinemu.features.settings.model.BooleanSetting
 import org.dolphinemu.dolphinemu.features.settings.model.IntSetting
 import org.dolphinemu.dolphinemu.utils.InsetsHelper
@@ -75,6 +76,7 @@ class MenuFragment : Fragment(), View.OnClickListener {
             button.setOnClickListener(this)
         }
 
+        binding.menuReset.setOnClickListener(this)
         binding.menuExit.setOnClickListener(this)
 
         val title = requireArguments().getString(KEY_TITLE, null)
@@ -114,11 +116,16 @@ class MenuFragment : Fragment(), View.OnClickListener {
     override fun onResume() {
         super.onResume()
         val savestatesEnabled = BooleanSetting.MAIN_ENABLE_SAVESTATES.boolean
+        val hardcoreEnabled = AchievementModel.isHardcoreModeActive()
         val savestateVisibility = if (savestatesEnabled) View.VISIBLE else View.GONE
         binding.menuQuicksave.visibility = savestateVisibility
         binding.menuQuickload.visibility = savestateVisibility
         binding.menuEmulationSaveRoot.visibility = savestateVisibility
         binding.menuEmulationLoadRoot.visibility = savestateVisibility
+        // While technically the option is still enabled, AchievementManager
+        // will block the load and send a message to the screen.
+        binding.menuQuickload.paint.isStrikeThruText = hardcoreEnabled
+        binding.menuEmulationLoadRoot.paint.isStrikeThruText = hardcoreEnabled
     }
 
     override fun onDestroyView() {
@@ -193,6 +200,7 @@ class MenuFragment : Fragment(), View.OnClickListener {
                 EmulationActivity.MENU_ACTION_CHANGE_DISC
             )
             buttonsActionsMap.append(R.id.menu_exit, EmulationActivity.MENU_ACTION_EXIT)
+            buttonsActionsMap.append(R.id.menu_reset, EmulationActivity.MENU_ACTION_RESET)
             buttonsActionsMap.append(R.id.menu_settings, EmulationActivity.MENU_ACTION_SETTINGS)
             buttonsActionsMap.append(R.id.menu_skylanders, EmulationActivity.MENU_ACTION_SKYLANDERS)
             buttonsActionsMap.append(

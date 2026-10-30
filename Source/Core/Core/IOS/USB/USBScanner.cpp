@@ -22,11 +22,14 @@
 #include "Core/Core.h"
 #include "Core/IOS/USB/Common.h"
 #include "Core/IOS/USB/Emulated/Infinity.h"
+#include "Core/IOS/USB/Emulated/LogitechMic.h"
 #include "Core/IOS/USB/Emulated/Skylanders/Skylander.h"
+#include "Core/IOS/USB/Emulated/WiiSpeak.h"
 #include "Core/IOS/USB/Host.h"
 #include "Core/IOS/USB/LibusbDevice.h"
 #include "Core/NetPlayProto.h"
 #include "Core/System.h"
+#include "Core/USBUtils.h"
 
 namespace IOS::HLE
 {
@@ -141,7 +144,7 @@ bool USBScanner::AddNewDevices(DeviceMap* new_devices) const
 #ifdef __LIBUSB__
   if (!Core::WantsDeterminism())
   {
-    auto whitelist = Config::GetUSBDeviceWhitelist();
+    const auto whitelist = Config::GetUSBDeviceWhitelist();
     if (whitelist.empty())
       return true;
 
@@ -150,7 +153,12 @@ bool USBScanner::AddNewDevices(DeviceMap* new_devices) const
       const int ret = m_context.GetDeviceList([&](libusb_device* device) {
         libusb_device_descriptor descriptor;
         libusb_get_device_descriptor(device, &descriptor);
-        if (!whitelist.contains({descriptor.idVendor, descriptor.idProduct}))
+        if (descriptor.idVendor == 0x1209 && descriptor.idProduct == 0x2882)
+        {
+          WakeupSantrollerDevice(device);
+        }
+        const USBUtils::DeviceInfo device_info{descriptor.idVendor, descriptor.idProduct};
+        if (!whitelist.contains(device_info))
           return true;
 
         auto usb_device = std::make_unique<USB::LibusbDevice>(device, descriptor);
@@ -177,6 +185,42 @@ void USBScanner::AddEmulatedDevices(DeviceMap* new_devices)
     auto infinity_base = std::make_unique<USB::InfinityUSB>();
     AddDevice(std::move(infinity_base), new_devices);
   }
+  if (Config::Get(Config::MAIN_EMULATE_WII_SPEAK) && !NetPlay::IsNetPlayRunning())
+  {
+    auto wii_speak = std::make_unique<USB::WiiSpeak>();
+    AddDevice(std::move(wii_speak), new_devices);
+  }
+  for (u8 index = 0; index != Config::EMULATED_LOGITECH_MIC_COUNT; ++index)
+  {
+    if (Config::Get(Config::MAIN_EMULATE_LOGITECH_MIC[index]) && !NetPlay::IsNetPlayRunning())
+    {
+      auto logitech_mic = std::make_unique<USB::LogitechMic>(index);
+      AddDevice(std::move(logitech_mic), new_devices);
+    }
+  }
+}
+
+void USBScanner::WakeupSantrollerDevice(libusb_device* device)
+{
+#ifdef __LIBUSB__
+  // Santroller devices emulate various instruments for multiple consoles.
+  // On an actual console, santroller detects the console based on how it communicates
+  // with usb devices. Since the underlying operating system is doing that here, the
+  // check doesn't work, so we need to send a special command to make the device
+  // jump to wii emulation mode.
+  libusb_device_handle* lusb_handle;
+  if (libusb_open(device, &lusb_handle) == LIBUSB_SUCCESS)
+  {
+#ifdef __linux__
+    libusb_set_auto_detach_kernel_driver(lusb_handle, true);
+    libusb_claim_interface(lusb_handle, 2);
+#endif
+    libusb_control_transfer(
+        lusb_handle, +LIBUSB_ENDPOINT_IN | +LIBUSB_REQUEST_TYPE_CLASS | +LIBUSB_RECIPIENT_INTERFACE,
+        0x01, 0x03f2, 2, nullptr, 0x11, 5000);
+    libusb_close(lusb_handle);
+  }
+#endif
 }
 
 void USBScanner::AddDevice(std::unique_ptr<USB::Device> device, DeviceMap* new_devices)

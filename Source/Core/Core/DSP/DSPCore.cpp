@@ -109,7 +109,18 @@ public:
 protected:
   u8 ReadMemory(u32 address) override { return Host::ReadHostMemory(address); }
   void WriteMemory(u32 address, u8 value) override { Host::WriteHostMemory(value, address); }
-  void OnEndException() override { m_dsp.SetException(ExceptionType::AcceleratorOverflow); }
+  void OnRawReadEndException() override
+  {
+    m_dsp.SetException(ExceptionType::AcceleratorRawReadOverflow);
+  }
+  void OnRawWriteEndException() override
+  {
+    m_dsp.SetException(ExceptionType::AcceleratorRawWriteOverflow);
+  }
+  void OnSampleReadEndException() override
+  {
+    m_dsp.SetException(ExceptionType::AcceleratorSampleReadOverflow);
+  }
 
 private:
   SDSP& m_dsp;
@@ -213,11 +224,11 @@ void SDSP::CheckExternalInterrupt()
   control_reg &= ~CR_EXTERNAL_INT;
 }
 
-void SDSP::CheckExceptions()
+bool SDSP::CheckExceptions()
 {
   // Early out to skip the loop in the common case.
   if (exceptions == 0)
-    return;
+    return false;
 
   for (int i = 7; i > 0; i--)
   {
@@ -236,7 +247,7 @@ void SDSP::CheckExceptions()
           r.sr &= ~SR_EXT_INT_ENABLE;
         else
           r.sr &= ~SR_INT_ENABLE;
-        break;
+        return true;
       }
       else
       {
@@ -246,6 +257,8 @@ void SDSP::CheckExceptions()
       }
     }
   }
+
+  return false;
 }
 
 u16 SDSP::ReadRegister(size_t reg) const
@@ -416,8 +429,6 @@ bool DSPCore::Initialize(const DSPInitOptions& opts)
   if (!m_dsp.Initialize(opts))
     return false;
 
-  m_init_hax = false;
-
   // Initialize JIT, if necessary
   if (opts.core_type == DSPInitOptions::CoreType::JIT64)
     m_dsp_jit = JIT::CreateDSPEmitter(*this);
@@ -469,8 +480,6 @@ int DSPCore::RunCycles(int cycles)
 
       m_dsp_interpreter->Step();
       cycles--;
-
-      Host::UpdateDebugger();
       break;
     case State::Stopped:
       break;
@@ -506,8 +515,6 @@ void DSPCore::SetState(State new_state)
   // kick the event, in case we are waiting
   if (new_state == State::Running)
     m_step_event.Set();
-
-  Host::UpdateDebugger();
 }
 
 State DSPCore::GetState() const
@@ -530,9 +537,9 @@ void DSPCore::CheckExternalInterrupt()
   m_dsp.CheckExternalInterrupt();
 }
 
-void DSPCore::CheckExceptions()
+bool DSPCore::CheckExceptions()
 {
-  m_dsp.CheckExceptions();
+  return m_dsp.CheckExceptions();
 }
 
 u16 DSPCore::ReadRegister(size_t reg) const
@@ -593,7 +600,6 @@ bool DSPCore::IsJITCreated() const
 void DSPCore::DoState(PointerWrap& p)
 {
   m_dsp.DoState(p);
-  p.Do(m_init_hax);
 
   if (m_dsp_jit)
     m_dsp_jit->DoState(p);

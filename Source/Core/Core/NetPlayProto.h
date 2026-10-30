@@ -5,7 +5,6 @@
 
 #include <array>
 #include <string>
-#include <vector>
 
 #include "Common/CommonTypes.h"
 #include "Common/EnumMap.h"
@@ -30,6 +29,20 @@ enum class CPUCore;
 
 namespace NetPlay
 {
+struct GBAConfig
+{
+  bool enabled = false;
+  bool has_rom = false;
+  std::string title;
+  std::array<u8, 20> hash{};
+};
+
+using PlayerId = u8;
+using FrameNum = u32;
+using PadIndex = s8;
+using PadMappingArray = std::array<PlayerId, 4>;
+using GBAConfigArray = std::array<GBAConfig, 4>;
+
 struct NetSettings
 {
   bool cpu_thread = false;
@@ -47,6 +60,8 @@ struct NetSettings
   bool allow_sd_writes = false;
   bool oc_enable = false;
   float oc_factor = 0;
+  bool vi_oc_enable = false;
+  float vi_oc_factor = 0;
   Common::EnumMap<ExpansionInterface::EXIDeviceType, ExpansionInterface::MAX_SLOT> exi_device{};
   int memcard_size_override = -1;
 
@@ -66,6 +81,7 @@ struct NetSettings
   bool divide_by_zero_exceptions = false;
   bool fprf = false;
   bool accurate_nans = false;
+  bool accurate_fmadds = false;
   bool disable_icache = false;
   bool sync_on_skip_idle = false;
   bool sync_gpu = false;
@@ -109,8 +125,14 @@ struct NetSettings
 
   Sram sram;
 
+  // These are sent separately from the other settings
+  PadMappingArray pad_map{};
+  GBAConfigArray gba_config{};
+  PadMappingArray wiimote_map{};
+
   // These aren't sent over the network directly
   bool is_hosting = false;
+  PlayerId local_player_id;
   std::array<std::string, 4> gba_rom_paths{};
 };
 
@@ -222,6 +244,7 @@ enum class SyncCodeID : u8
 };
 
 constexpr u32 MAX_NAME_LENGTH = 30;
+constexpr u32 MAX_TARGET_PAD_BUFFER_SIZE = 99;
 constexpr size_t CHUNKED_DATA_UNIT_SIZE = 16384;
 constexpr u32 MAX_ENET_MTU = 1392;  // see https://github.com/lsalzman/enet/issues/132
 
@@ -231,19 +254,6 @@ enum : u8
   CHUNKED_DATA_CHANNEL,
   CHANNEL_COUNT
 };
-
-using PlayerId = u8;
-using FrameNum = u32;
-using PadIndex = s8;
-using PadMappingArray = std::array<PlayerId, 4>;
-struct GBAConfig
-{
-  bool enabled = false;
-  bool has_rom = false;
-  std::string title;
-  std::array<u8, 20> hash{};
-};
-using GBAConfigArray = std::array<GBAConfig, 4>;
 
 struct PadDetails
 {

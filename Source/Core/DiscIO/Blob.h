@@ -97,6 +97,9 @@ public:
     return false;
   }
 
+  // Returns true only for CachedBlobReader.
+  virtual bool IsCached() const { return false; }
+
 protected:
   BlobReader() {}
 };
@@ -107,7 +110,7 @@ protected:
 class SectorReader : public BlobReader
 {
 public:
-  virtual ~SectorReader() = 0;
+  ~SectorReader() override = 0;
 
   bool Read(u64 offset, u64 size, u8* out_ptr) override;
 

@@ -59,21 +59,26 @@ PBUpdateData LoadPBUpdates(Memory::MemoryManager& memory, const PB_TYPE& pb)
 // Apply updates to a PB.
 void ApplyUpdatesForMs(int curr_ms, PB_TYPE& pb, u16* num_updates, const PBUpdateData& updates)
 {
-  auto pb_mem = Common::BitCastToArray<u16>(pb);
-
   u32 start_idx = 0;
   for (int i = 0; i < curr_ms; ++i)
     start_idx += num_updates[i];
 
-  for (u32 i = start_idx; i < start_idx + num_updates[curr_ms]; ++i)
+  if (start_idx < updates.size())
   {
-    u16 update_off = updates[i].pb_offset;
-    u16 update_val = updates[i].new_value;
+    const u16 count = num_updates[curr_ms];
+    if (count <= updates.size() - start_idx)
+    {
+      const u32 end_idx = start_idx + count;
+      for (u32 i = start_idx; i < end_idx; ++i)
+      {
+        const u16 update_off = updates[i].pb_offset;
+        const u16 update_val = updates[i].new_value;
 
-    pb_mem[update_off] = update_val;
+        if (update_off < (sizeof(pb) / sizeof(u16)))
+          Common::BitCastPtr<u16>(&pb)[update_off] = update_val;
+      }
+    }
   }
-
-  pb = std::bit_cast<PB_TYPE>(pb_mem);
 }
 
 // Used to pass a large amount of buffers to the mixing function.
@@ -129,12 +134,14 @@ public:
   HLEAccelerator(HLEAccelerator&&) = delete;
   HLEAccelerator& operator=(const HLEAccelerator&) = delete;
   HLEAccelerator& operator=(HLEAccelerator&&) = delete;
-  ~HLEAccelerator() = default;
+  ~HLEAccelerator() override = default;
 
   PB_TYPE* acc_pb = nullptr;
 
 protected:
-  void OnEndException() override
+  void OnRawReadEndException() override {}
+  void OnRawWriteEndException() override {}
+  void OnSampleReadEndException() override
   {
     if (acc_pb->audio_addr.looping)
     {
@@ -181,6 +188,7 @@ void AcceleratorSetup(HLEAccelerator* accelerator, PB_TYPE* pb)
   accelerator->SetSampleFormat(pb->audio_addr.sample_format);
   accelerator->SetYn1(pb->adpcm.yn1);
   accelerator->SetYn2(pb->adpcm.yn2);
+  accelerator->SetGain(pb->adpcm.gain);
   accelerator->SetPredScale(pb->adpcm.pred_scale);
 }
 
@@ -189,7 +197,7 @@ void AcceleratorSetup(HLEAccelerator* accelerator, PB_TYPE* pb)
 // by the accelerator on real hardware).
 u16 AcceleratorGetSample(HLEAccelerator* accelerator)
 {
-  return accelerator->Read(accelerator->acc_pb->adpcm.coefs);
+  return accelerator->ReadSample(accelerator->acc_pb->adpcm.coefs);
 }
 
 // Reads samples from the input callback, resamples them to <count> samples at
@@ -533,7 +541,7 @@ void ProcessVoice(HLEAccelerator* accelerator, PB_TYPE& pb, const AXBuffers& buf
   if (pb.initial_time_delay.on)
   {
     // TODO
-    DolphinAnalytics::Instance().ReportGameQuirk(GameQuirk::USES_AX_INITIAL_TIME_DELAY);
+    DolphinAnalytics::Instance().ReportGameQuirk(GameQuirk::UsesAXInitialTimeDelay);
   }
 
 #ifdef AX_WII
@@ -545,12 +553,12 @@ void ProcessVoice(HLEAccelerator* accelerator, PB_TYPE& pb, const AXBuffers& buf
       // Only one filter at most for Wiimotes.
       if (pb.remote_iir.on == 2)
       {
-        DolphinAnalytics::Instance().ReportGameQuirk(GameQuirk::USES_AX_WIIMOTE_BIQUAD);
+        DolphinAnalytics::Instance().ReportGameQuirk(GameQuirk::UsesAXWiimoteBiquad);
         BiquadFilter(samples, count, pb.remote_iir.biquad);
       }
       else
       {
-        DolphinAnalytics::Instance().ReportGameQuirk(GameQuirk::USES_AX_WIIMOTE_LOWPASS);
+        DolphinAnalytics::Instance().ReportGameQuirk(GameQuirk::UsesAXWiimoteLowPass);
         LowPassFilter(samples, count, pb.remote_iir.lpf);
       }
     }

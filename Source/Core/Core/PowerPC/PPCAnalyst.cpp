@@ -5,7 +5,6 @@
 
 #include <algorithm>
 #include <map>
-#include <queue>
 #include <string>
 #include <vector>
 
@@ -14,8 +13,6 @@
 #include "Common/Assert.h"
 #include "Common/CommonTypes.h"
 #include "Common/Logging/Log.h"
-#include "Common/StringUtil.h"
-#include "Core/Config/MainSettings.h"
 #include "Core/ConfigManager.h"
 #include "Core/Core.h"
 #include "Core/HLE/HLE.h"
@@ -346,10 +343,10 @@ static void FindFunctionsFromHandlers(const Core::CPUThreadGuard& guard, PPCSymb
     if (read_result.valid && PPCTables::IsValidInstruction(read_result.hex, entry.first))
     {
       // Check if this function is already mapped
-      Common::Symbol* f = func_db->AddFunction(guard, entry.first);
+      const Common::Symbol* f = func_db->AddFunction(guard, entry.first);
       if (!f)
         continue;
-      f->Rename(entry.second);
+      func_db->RenameSymbol(*f, entry.second);
     }
   }
 }
@@ -359,8 +356,8 @@ static void FindFunctionsAfterReturnInstruction(const Core::CPUThreadGuard& guar
 {
   std::vector<u32> funcAddrs;
 
-  for (const auto& func : func_db->Symbols())
-    funcAddrs.push_back(func.second.address + func.second.size);
+  func_db->ForEachSymbol(
+      [&](const Common::Symbol& symbol) { funcAddrs.push_back(symbol.address + symbol.size); });
 
   auto& mmu = guard.GetSystem().GetMMU();
   for (u32& location : funcAddrs)
@@ -380,7 +377,7 @@ static void FindFunctionsAfterReturnInstruction(const Core::CPUThreadGuard& guar
       if (read_result.valid && PPCTables::IsValidInstruction(read_result.hex, location))
       {
         // check if this function is already mapped
-        Common::Symbol* f = func_db->AddFunction(guard, location);
+        const Common::Symbol* f = func_db->AddFunction(guard, location);
         if (!f)
           break;
         else
@@ -407,45 +404,45 @@ void FindFunctions(const Core::CPUThreadGuard& guard, u32 startAddr, u32 endAddr
   int numLeafs = 0, numNice = 0, numUnNice = 0;
   int numTimer = 0, numRFI = 0, numStraightLeaf = 0;
   int leafSize = 0, niceSize = 0, unniceSize = 0;
-  for (auto& func : func_db->AccessSymbols())
-  {
-    if (func.second.address == 4)
+  func_db->ForEachSymbolWithMutation([&](Common::Symbol& f) {
+    if (f.address == 4)
     {
       WARN_LOG_FMT(SYMBOLS, "Weird function");
-      continue;
-    }
-    AnalyzeFunction2(func_db, &(func.second));
-    Common::Symbol& f = func.second;
-    if (f.name.substr(0, 3) == "zzz")
-    {
-      if (f.flags & Common::FFLAG_LEAF)
-        f.Rename(f.name + "_leaf");
-      if (f.flags & Common::FFLAG_STRAIGHT)
-        f.Rename(f.name + "_straight");
-    }
-    if (f.flags & Common::FFLAG_LEAF)
-    {
-      numLeafs++;
-      leafSize += f.size;
-    }
-    else if (f.flags & Common::FFLAG_ONLYCALLSNICELEAFS)
-    {
-      numNice++;
-      niceSize += f.size;
     }
     else
     {
-      numUnNice++;
-      unniceSize += f.size;
-    }
+      AnalyzeFunction2(func_db, &f);
+      if (f.name.substr(0, 3) == "zzz")
+      {
+        if (f.flags & Common::FFLAG_LEAF)
+          f.Rename(f.name + "_leaf");
+        if (f.flags & Common::FFLAG_STRAIGHT)
+          f.Rename(f.name + "_straight");
+      }
+      if (f.flags & Common::FFLAG_LEAF)
+      {
+        numLeafs++;
+        leafSize += f.size;
+      }
+      else if (f.flags & Common::FFLAG_ONLYCALLSNICELEAFS)
+      {
+        numNice++;
+        niceSize += f.size;
+      }
+      else
+      {
+        numUnNice++;
+        unniceSize += f.size;
+      }
 
-    if (f.flags & Common::FFLAG_TIMERINSTRUCTIONS)
-      numTimer++;
-    if (f.flags & Common::FFLAG_RFI)
-      numRFI++;
-    if ((f.flags & Common::FFLAG_STRAIGHT) && (f.flags & Common::FFLAG_LEAF))
-      numStraightLeaf++;
-  }
+      if (f.flags & Common::FFLAG_TIMERINSTRUCTIONS)
+        numTimer++;
+      if (f.flags & Common::FFLAG_RFI)
+        numRFI++;
+      if ((f.flags & Common::FFLAG_STRAIGHT) && (f.flags & Common::FFLAG_LEAF))
+        numStraightLeaf++;
+    }
+  });
   if (numLeafs == 0)
     leafSize = 0;
   else
@@ -760,6 +757,12 @@ bool PPCAnalyzer::IsBusyWaitLoop(CodeBlock* block, CodeOp* code, size_t instruct
       if (code[i].branchTo == block->m_address && i == instructions)
         return true;
     }
+    // A `nop` is actually a `ori r0, r0, 0`, which would violate the rules (unless `r0` was written
+    // earlier).
+    else if (code[i].inst.hex == 0x60000000)
+    {
+      continue;
+    }
     else if (code[i].opinfo->type != OpType::Integer && code[i].opinfo->type != OpType::Load)
     {
       // In the future, some subsets of other instruction types might get
@@ -852,7 +855,8 @@ u32 PPCAnalyzer::Analyze(u32 address, CodeBlock* block, CodeBuffer* buffer,
     code[i].inst = inst;
     code[i].skip = false;
     block->m_stats->numCycles += opinfo->num_cycles;
-    block->m_physical_addresses.insert(result.physical_address);
+    block->m_physical_addresses.insert(result.physical_address,
+                                       result.physical_address + sizeof(UGeckoInstruction));
 
     SetInstructionStats(block, &code[i], opinfo);
 
@@ -986,8 +990,9 @@ u32 PPCAnalyzer::Analyze(u32 address, CodeBlock* block, CodeBuffer* buffer,
   // wants flags, to be safe.
   bool wantsFPRF = true;
   bool wantsCA = true;
-  BitSet8 crInUse, crDiscardable;
-  BitSet32 gprBlockInputs, gprInUse, fprInUse, gprDiscardable, fprDiscardable, fprInXmm;
+  BitSet8 crWillBeRead, crWillBeWritten, crDiscardable;
+  BitSet32 gprWillBeRead, gprWillBeWritten, fprWillBeRead, fprWillBeWritten, gprDiscardable,
+      fprDiscardable, fprInXmm;
   for (int i = block->m_num_instructions - 1; i >= 0; i--)
   {
     CodeOp& op = code[i];
@@ -1014,28 +1019,38 @@ u32 PPCAnalyzer::Analyze(u32 address, CodeBlock* block, CodeBuffer* buffer,
     wantsCA |= opWantsCA || may_exit_block;
     wantsFPRF &= !op.outputFPRF || opWantsFPRF;
     wantsCA &= !op.outputCA || opWantsCA;
-    op.gprInUse = gprInUse;
-    op.fprInUse = fprInUse;
-    op.crInUse = crInUse;
+    op.gprWillBeRead = gprWillBeRead;
+    op.gprWillBeWritten = gprWillBeWritten;
+    op.fprWillBeRead = fprWillBeRead;
+    op.fprWillBeWritten = fprWillBeWritten;
+    op.crWillBeRead = crWillBeRead;
+    op.crWillBeWritten = crWillBeWritten;
     op.gprDiscardable = gprDiscardable;
     op.fprDiscardable = fprDiscardable;
     op.crDiscardable = crDiscardable;
     op.fprInXmm = fprInXmm;
-    gprBlockInputs &= ~op.regsOut;
-    gprBlockInputs |= op.regsIn;
-    gprInUse |= op.regsIn | op.regsOut;
-    fprInUse |= op.fregsIn | op.GetFregsOut();
-    crInUse |= op.crIn | op.crOut;
+    gprWillBeRead &= ~op.regsOut;
+    gprWillBeRead |= op.regsIn;
+    gprWillBeWritten |= op.regsOut;
+    fprWillBeRead &= ~op.GetFregsOut();
+    fprWillBeRead |= op.fregsIn;
+    fprWillBeWritten |= op.GetFregsOut();
+    crWillBeRead &= ~op.crOut;
+    crWillBeRead |= op.crIn;
+    crWillBeWritten |= op.crOut;
 
     if (strncmp(op.opinfo->opname, "stfd", 4))
       fprInXmm |= op.fregsIn;
 
     if (hle || breakpoint)
     {
-      gprInUse = BitSet32{};
-      fprInUse = BitSet32{};
+      gprWillBeRead = BitSet32{};
+      gprWillBeWritten = BitSet32{};
+      fprWillBeRead = BitSet32{};
+      fprWillBeWritten = BitSet32{};
       fprInXmm = BitSet32{};
-      crInUse = BitSet8{};
+      crWillBeRead = BitSet8{};
+      crWillBeWritten = BitSet8{};
       gprDiscardable = BitSet32{};
       fprDiscardable = BitSet32{};
       crDiscardable = BitSet8{};
@@ -1151,7 +1166,7 @@ u32 PPCAnalyzer::Analyze(u32 address, CodeBlock* block, CodeBuffer* buffer,
   }
   block->m_gqr_used = gqrUsed;
   block->m_gqr_modified = gqrModified;
-  block->m_gpr_inputs = gprBlockInputs;
+  block->m_gpr_inputs = gprWillBeRead;
   return address;
 }
 

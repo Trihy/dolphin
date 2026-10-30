@@ -3,6 +3,8 @@
 
 #include "DolphinQt/ResourcePackManager.h"
 
+#include <string>
+
 #include <QDesktopServices>
 #include <QDialogButtonBox>
 #include <QGridLayout>
@@ -14,8 +16,8 @@
 #include "Common/FileUtil.h"
 #include "DolphinQt/QtUtils/ModalMessageBox.h"
 #include "DolphinQt/QtUtils/NonDefaultQPushButton.h"
-#include "DolphinQt/QtUtils/SetWindowDecorations.h"
 #include "UICommon/ResourcePack/Manager.h"
+#include "UICommon/ResourcePack/ResourcePack.h"
 
 ResourcePackManager::ResourcePackManager(QWidget* widget) : QDialog(widget)
 {
@@ -24,7 +26,6 @@ ResourcePackManager::ResourcePackManager(QWidget* widget) : QDialog(widget)
   RepopulateTable();
 
   setWindowTitle(tr("Resource Pack Manager"));
-  setWindowFlags(windowFlags() & ~Qt::WindowContextHelpButtonHint);
 
   resize(QSize(900, 600));
 }
@@ -164,7 +165,7 @@ void ResourcePackManager::RepopulateTable()
   SelectionChanged();
 }
 
-// Revert the indicies as to be more intuitive for users
+// Revert the indices as to be more intuitive for users
 int ResourcePackManager::GetResourcePackIndex(QTableWidgetItem* item) const
 {
   return m_table_widget->rowCount() - 1 - item->row();
@@ -242,12 +243,15 @@ void ResourcePackManager::Remove()
   box.setIcon(QMessageBox::Warning);
   box.setStandardButtons(QMessageBox::Yes | QMessageBox::Abort);
 
-  SetQWidgetWindowDecorations(&box);
   if (box.exec() != QMessageBox::Yes)
     return;
 
+  ResourcePack::ResourcePack& selected_pack =
+      ResourcePack::GetPacks()[GetResourcePackIndex(items[0])];
+  const std::string selected_pack_path = selected_pack.GetPath();
   Uninstall();
-  File::Delete(ResourcePack::GetPacks()[GetResourcePackIndex(items[0])].GetPath());
+  ResourcePack::Remove(selected_pack);
+  File::Delete(selected_pack_path);
   RepopulateTable();
 }
 

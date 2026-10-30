@@ -4,11 +4,7 @@
 #pragma once
 
 #include <mutex>
-#include <thread>
-#include <vector>
 
-#include "Common/Flag.h"
-#include "Common/Network.h"
 #include "Core/HW/EXI/BBA/TAPServerConnection.h"
 #include "Core/HW/EXI/EXI_Device.h"
 
@@ -33,7 +29,7 @@ class CEXIModem : public IEXIDevice
 {
 public:
   CEXIModem(Core::System& system, ModemDeviceType type);
-  virtual ~CEXIModem();
+  ~CEXIModem() override;
   void SetCS(int cs) override;
   bool IsPresent() const override;
   bool IsInterruptSet() override;
@@ -136,13 +132,13 @@ private:
     TAPServerNetworkInterface(CEXIModem* modem_ref, const std::string& destination);
 
   public:
-    virtual bool Activate() override;
-    virtual void Deactivate() override;
-    virtual bool IsActivated() override;
-    virtual bool SendAndRemoveAllHDLCFrames(std::string* send_buffer) override;
-    virtual bool RecvInit() override;
-    virtual void RecvStart() override;
-    virtual void RecvStop() override;
+    bool Activate() override;
+    void Deactivate() override;
+    bool IsActivated() override;
+    bool SendAndRemoveAllHDLCFrames(std::string* send_buffer) override;
+    bool RecvInit() override;
+    void RecvStart() override;
+    void RecvStop() override;
 
   private:
     TAPServerConnection m_tapserver_if;

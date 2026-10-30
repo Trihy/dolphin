@@ -5,13 +5,17 @@
 
 #include <memory>
 
+#include "Common/CommonTypes.h"
+
 class GeometryShaderManager;
 class Interpreter;
 class JitInterface;
+class PerformanceMetrics;
 class PixelShaderManager;
 class SoundStream;
 struct Sram;
 class VertexShaderManager;
+struct VideoEvents;
 class XFStateManager;
 
 namespace AudioInterface
@@ -108,8 +112,8 @@ class SystemTimersManager;
 }
 namespace VideoCommon
 {
-class CustomAssetLoader;
-}
+class CustomResourceManager;
+}  // namespace VideoCommon
 namespace VideoInterface
 {
 class VideoInterfaceManager;
@@ -145,6 +149,7 @@ public:
   bool IsTriforce() const { return m_is_triforce; }
   bool IsWii() const { return m_is_wii; }
   bool IsBranchWatchIgnoreApploader() { return m_branch_watch_ignore_apploader; }
+  u32 GetSimulatedMemorySize() const { return m_simulated_memory_size; }
 
   void SetIsMIOS(bool is_mios) { m_is_mios = is_mios; }
   void SetIsTriforce(bool is_triforce) { m_is_triforce = is_triforce; }
@@ -184,6 +189,7 @@ public:
   MemoryInterface::MemoryInterfaceManager& GetMemoryInterface() const;
   PowerPC::MMU& GetMMU() const;
   Movie::MovieManager& GetMovie() const;
+  PerformanceMetrics& GetPerfMetrics() const;
   PixelEngine::PixelEngineManager& GetPixelEngine() const;
   PixelShaderManager& GetPixelShaderManager() const;
   PowerPC::PowerPCManager& GetPowerPC() const;
@@ -197,7 +203,8 @@ public:
   VertexShaderManager& GetVertexShaderManager() const;
   XFStateManager& GetXFStateManager() const;
   VideoInterface::VideoInterfaceManager& GetVideoInterface() const;
-  VideoCommon::CustomAssetLoader& GetCustomAssetLoader() const;
+  VideoCommon::CustomResourceManager& GetCustomResourceManager() const;
+  VideoEvents& GetVideoEvents() const;
 
 private:
   System();
@@ -212,5 +219,6 @@ private:
   bool m_is_triforce = false;
   bool m_is_wii = false;
   bool m_branch_watch_ignore_apploader = false;
+  u32 m_simulated_memory_size{0};
 };
 }  // namespace Core

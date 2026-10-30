@@ -17,9 +17,9 @@ class PointerWrap;
 class MemoryCard : public MemoryCardBase
 {
 public:
-  MemoryCard(const std::string& filename, ExpansionInterface::Slot card_slot,
+  MemoryCard(std::string filename, ExpansionInterface::Slot card_slot,
              u16 size_mbits = Memcard::MBIT_SIZE_MEMORY_CARD_2043);
-  ~MemoryCard();
+  ~MemoryCard() override;
   void FlushThread();
   void MakeDirty();
 

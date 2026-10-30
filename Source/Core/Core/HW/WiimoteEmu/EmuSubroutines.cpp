@@ -3,19 +3,19 @@
 
 #include "Core/HW/WiimoteEmu/WiimoteEmu.h"
 
-#include <cmath>
 #include <iterator>
+#include <utility>
 
 #include "Common/BitUtils.h"
 #include "Common/ChunkFile.h"
 #include "Common/CommonTypes.h"
-#include "Common/EnumUtils.h"
 #include "Common/Logging/Log.h"
 #include "Common/MsgHandler.h"
 #include "Common/Swap.h"
 
 #include "Core/Core.h"
 #include "Core/HW/Wiimote.h"
+#include "Core/HW/WiimoteCommon/DataReport.h"
 #include "Core/HW/WiimoteCommon/WiimoteHid.h"
 
 namespace WiimoteEmu
@@ -208,7 +208,7 @@ void Wiimote::HandleExtensionSwap(ExtensionNumber desired_extension_number,
     else
     {
       INFO_LOG_FMT(WIIMOTE, "Switching to Extension {} (Wiimote {} in slot {})",
-                   Common::ToUnderlying(desired_extension_number), m_index, m_bt_device_index);
+                   std::to_underlying(desired_extension_number), m_index, m_bt_device_index);
 
       m_active_extension = desired_extension_number;
     }
@@ -305,7 +305,7 @@ void Wiimote::HandleWriteData(const OutputReportWriteData& wd)
     auto const bytes_written = m_i2c_bus.BusWrite(wd.slave_address, (u8)address, wd.size, wd.data);
     if (bytes_written != wd.size)
     {
-      // A real wiimote gives error 7 for failed write to i2c bus (mainly a non-existant slave)
+      // A real wiimote gives error 7 for failed write to i2c bus (mainly a non-existent slave)
       error_code = ErrorCode::Nack;
     }
   }
@@ -363,6 +363,8 @@ void Wiimote::HandleSpeakerMute(const WiimoteCommon::OutputReportEnableFeature& 
 {
   m_speaker_mute = rpt.enable;
 
+  m_speaker_logic.SetMuted(m_speaker_mute);
+
   if (rpt.ack)
     SendAck(OutputReportID::SpeakerMute, ErrorCode::Success);
 }
@@ -371,27 +373,23 @@ void Wiimote::HandleSpeakerEnable(const WiimoteCommon::OutputReportEnableFeature
 {
   m_status.speaker = rpt.enable;
 
+  m_speaker_logic.SetEnabled(m_status.speaker);
+
   if (rpt.ack)
     SendAck(OutputReportID::SpeakerEnable, ErrorCode::Success);
 }
 
 void Wiimote::HandleSpeakerData(const WiimoteCommon::OutputReportSpeakerData& rpt)
 {
-  // TODO: Does speaker_mute stop speaker data processing?
-  // and what about speaker_enable?
-  // (important to keep decoder in proper state)
-  if (!m_speaker_mute)
+  if (rpt.length > std::size(rpt.data))
   {
-    if (rpt.length > std::size(rpt.data))
-    {
-      ERROR_LOG_FMT(WIIMOTE, "Bad speaker data length: {}", rpt.length);
-    }
-    else
-    {
-      // Speaker data reports result in a write to the speaker hardware at offset 0x00.
-      m_i2c_bus.BusWrite(SpeakerLogic::I2C_ADDR, SpeakerLogic::SPEAKER_DATA_OFFSET, rpt.length,
-                         std::data(rpt.data));
-    }
+    ERROR_LOG_FMT(WIIMOTE, "Bad speaker data length: {}", rpt.length);
+  }
+  else
+  {
+    // Speaker data reports result in a write to the speaker hardware at offset 0x00.
+    m_i2c_bus.BusWrite(SpeakerLogic::I2C_ADDR, SpeakerLogic::SPEAKER_DATA_OFFSET, rpt.length,
+                       std::data(rpt.data));
   }
 
   // FYI: Speaker data reports normally do not ACK but I have seen them ACK with error codes
@@ -463,7 +461,7 @@ bool Wiimote::ProcessReadDataRequest()
       // error code 8
 
       // The real Wiimote generate an error for the first
-      // request to 0x1770 if we dont't replicate that the game will never
+      // request to 0x1770 if we don't replicate that the game will never
       // read the calibration data at the beginning of Eeprom.
       error_code = ErrorCode::InvalidAddress;
     }
@@ -553,7 +551,12 @@ void Wiimote::DoState(PointerWrap& p)
   m_camera_logic.DoState(p);
 
   if (p.IsReadMode())
+  {
+    m_speaker_logic.SetEnabled(m_status.speaker);
+    m_speaker_logic.SetMuted(m_speaker_mute);
+
     m_camera_logic.SetEnabled(m_status.ir);
+  }
 
   p.Do(m_is_motion_plus_attached);
   p.Do(m_active_extension);

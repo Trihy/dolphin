@@ -3,11 +3,6 @@
 
 #include "VideoCommon/PixelShaderGen.h"
 
-#include <algorithm>
-#include <cmath>
-#include <cstdio>
-#include <fmt/format.h>
-
 #include "Common/Assert.h"
 #include "Common/CommonTypes.h"
 #include "Common/EnumMap.h"
@@ -16,9 +11,7 @@
 #include "VideoCommon/BoundingBox.h"
 #include "VideoCommon/DriverDetails.h"
 #include "VideoCommon/LightingShaderGen.h"
-#include "VideoCommon/NativeVertexFormat.h"
 #include "VideoCommon/RenderState.h"
-#include "VideoCommon/VertexLoaderManager.h"
 #include "VideoCommon/VideoCommon.h"
 #include "VideoCommon/VideoConfig.h"
 #include "VideoCommon/XFMemory.h"  // for texture projection mode
@@ -131,17 +124,6 @@ constexpr Common::EnumMap<const char*, TevColorArg::Zero> tev_c_input_table{
     "int3(0,0,0)",        // ZERO
 };
 
-constexpr Common::EnumMap<const char*, TevColorArg::Zero> tev_c_input_type{
-    "CUSTOM_SHADER_TEV_STAGE_INPUT_TYPE_PREV",    "CUSTOM_SHADER_TEV_STAGE_INPUT_TYPE_PREV",
-    "CUSTOM_SHADER_TEV_STAGE_INPUT_TYPE_COLOR",   "CUSTOM_SHADER_TEV_STAGE_INPUT_TYPE_COLOR",
-    "CUSTOM_SHADER_TEV_STAGE_INPUT_TYPE_COLOR",   "CUSTOM_SHADER_TEV_STAGE_INPUT_TYPE_COLOR",
-    "CUSTOM_SHADER_TEV_STAGE_INPUT_TYPE_COLOR",   "CUSTOM_SHADER_TEV_STAGE_INPUT_TYPE_COLOR",
-    "CUSTOM_SHADER_TEV_STAGE_INPUT_TYPE_TEX",     "CUSTOM_SHADER_TEV_STAGE_INPUT_TYPE_TEX",
-    "CUSTOM_SHADER_TEV_STAGE_INPUT_TYPE_RAS",     "CUSTOM_SHADER_TEV_STAGE_INPUT_TYPE_RAS",
-    "CUSTOM_SHADER_TEV_STAGE_INPUT_TYPE_NUMERIC", "CUSTOM_SHADER_TEV_STAGE_INPUT_TYPE_NUMERIC",
-    "CUSTOM_SHADER_TEV_STAGE_INPUT_TYPE_KONST",   "CUSTOM_SHADER_TEV_STAGE_INPUT_TYPE_NUMERIC",
-};
-
 constexpr Common::EnumMap<const char*, TevAlphaArg::Zero> tev_a_input_table{
     "prev.a",       // APREV,
     "c0.a",         // A0,
@@ -151,13 +133,6 @@ constexpr Common::EnumMap<const char*, TevAlphaArg::Zero> tev_a_input_table{
     "rastemp.a",    // RASA,
     "konsttemp.a",  // KONST,  (hw1 had quarter)
     "0",            // ZERO
-};
-
-constexpr Common::EnumMap<const char*, TevAlphaArg::Zero> tev_a_input_type{
-    "CUSTOM_SHADER_TEV_STAGE_INPUT_TYPE_PREV",  "CUSTOM_SHADER_TEV_STAGE_INPUT_TYPE_COLOR",
-    "CUSTOM_SHADER_TEV_STAGE_INPUT_TYPE_COLOR", "CUSTOM_SHADER_TEV_STAGE_INPUT_TYPE_COLOR",
-    "CUSTOM_SHADER_TEV_STAGE_INPUT_TYPE_TEX",   "CUSTOM_SHADER_TEV_STAGE_INPUT_TYPE_RAS",
-    "CUSTOM_SHADER_TEV_STAGE_INPUT_TYPE_KONST", "CUSTOM_SHADER_TEV_STAGE_INPUT_TYPE_NUMERIC",
 };
 
 constexpr Common::EnumMap<const char*, RasColorChan::Zero> tev_ras_table{
@@ -192,7 +167,7 @@ PixelShaderUid GetPixelShaderUid()
   PixelShaderUid out;
 
   pixel_shader_uid_data* const uid_data = out.GetUidData();
-  uid_data->useDstAlpha = bpmem.dstalpha.enable && bpmem.blendmode.alphaupdate &&
+  uid_data->useDstAlpha = bpmem.dstalpha.enable && bpmem.blendmode.alpha_update &&
                           bpmem.zcontrol.pixel_format == PixelFormat::RGBA6_Z24;
 
   uid_data->genMode_numindstages = bpmem.genMode.numindstages;
@@ -221,8 +196,8 @@ PixelShaderUid GetPixelShaderUid()
   const bool forced_early_z = uid_data->ztest == EmulatedZ::ForcedEarly;
   const bool per_pixel_depth =
       (bpmem.ztex2.op != ZTexOp::Disabled && uid_data->ztest == EmulatedZ::Late) ||
-      (!g_ActiveConfig.bFastDepthCalc && bpmem.zmode.testenable && !forced_early_z) ||
-      (bpmem.zmode.testenable && bpmem.genMode.zfreeze);
+      (!g_ActiveConfig.bFastDepthCalc && bpmem.zmode.test_enable && !forced_early_z) ||
+      (bpmem.zmode.test_enable && bpmem.genMode.zfreeze);
 
   uid_data->per_pixel_depth = per_pixel_depth;
 
@@ -1007,6 +982,12 @@ ShaderCode GeneratePixelShaderCode(APIType api_type, const ShaderHostConfig& hos
     out.Write("\tfrag_input.tex{0} = tex{0};\n", i);
   }
 
+  // Initialize other texture coordinates that are unused
+  for (u32 i = uid_data->genMode_numtexgens; i < 8; i++)
+  {
+    out.Write("\tfrag_input.tex{0} = vec3(0, 0, 0);\n", i);
+  }
+
   if (!custom_contents.shader.empty())
     GenerateCustomLighting(&out, uid_data->lighting);
 
@@ -1453,20 +1434,34 @@ static void WriteStage(ShaderCode& out, const pixel_shader_uid_data* uid_data, i
   if (ac.dest >= TevOutput::Color0)
     out.SetConstantsUsed(C_COLORS + u32(ac.dest.Value()), C_COLORS + u32(ac.dest.Value()));
 
+  const char* color_a = tev_c_input_table[cc.a];
+  const char* color_b = tev_c_input_table[cc.b];
+  if ((cc.a == TevColorArg::Zero || cc.b == TevColorArg::Zero) &&
+      DriverDetails::HasBug(DriverDetails::BUG_BROKEN_TEV_COLOR_ZERO))
+  {
+    // The Adreno shader compiler incorrectly optimizes the int3(0,0,0) constant, causing incorrect
+    // colors. To work around this, we trick the compiler by using konstLookup[8], which
+    // PixelShaderManager initializes to zero, to keep these inputs dependent on a uniform value.
+    // Slot 8 is safe because it is part of the invalid konst range (reads as zero on hardware).
+    // It is never written at runtime and therefore stays zero.
+    if (cc.a == TevColorArg::Zero)
+      color_a = "konstLookup[8].rgb";
+    if (cc.b == TevColorArg::Zero)
+      color_b = "konstLookup[8].rgb";
+  }
+
   if (DriverDetails::HasBug(DriverDetails::BUG_BROKEN_VECTOR_BITWISE_AND))
   {
-    out.Write("\ttevin_a = int4({} & 255, {} & 255);\n", tev_c_input_table[cc.a],
-              tev_a_input_table[ac.a]);
-    out.Write("\ttevin_b = int4({} & 255, {} & 255);\n", tev_c_input_table[cc.b],
-              tev_a_input_table[ac.b]);
+    out.Write("\ttevin_a = int4({} & 255, {} & 255);\n", color_a, tev_a_input_table[ac.a]);
+    out.Write("\ttevin_b = int4({} & 255, {} & 255);\n", color_b, tev_a_input_table[ac.b]);
     out.Write("\ttevin_c = int4({} & 255, {} & 255);\n", tev_c_input_table[cc.c],
               tev_a_input_table[ac.c]);
   }
   else
   {
-    out.Write("\ttevin_a = int4({}, {})&int4(255, 255, 255, 255);\n", tev_c_input_table[cc.a],
+    out.Write("\ttevin_a = int4({}, {})&int4(255, 255, 255, 255);\n", color_a,
               tev_a_input_table[ac.a]);
-    out.Write("\ttevin_b = int4({}, {})&int4(255, 255, 255, 255);\n", tev_c_input_table[cc.b],
+    out.Write("\ttevin_b = int4({}, {})&int4(255, 255, 255, 255);\n", color_b,
               tev_a_input_table[ac.b]);
     out.Write("\ttevin_c = int4({}, {})&int4(255, 255, 255, 255);\n", tev_c_input_table[cc.c],
               tev_a_input_table[ac.c]);
@@ -2061,11 +2056,7 @@ static void WriteFragmentDefinitions(APIType api_type, const ShaderHostConfig& h
   out.Write("\tint layer;\n");
   out.Write("\tvec3 normal;\n");
   out.Write("\tvec3 position;\n");
-  for (u32 i = 0; i < uid_data->genMode_numtexgens; i++)
-  {
-    out.Write("\tvec3 tex{};\n", i);
-  }
-  for (u32 i = uid_data->genMode_numtexgens; i < 8; i++)
+  for (u32 i = 0; i < 8; i++)
   {
     out.Write("\tvec3 tex{};\n", i);
   }

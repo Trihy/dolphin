@@ -17,6 +17,7 @@ class QSplitter;
 class QListWidget;
 class QPushButton;
 class QTableWidget;
+class QToolButton;
 
 namespace Common
 {
@@ -33,7 +34,7 @@ class CodeWidget : public QDockWidget
   Q_OBJECT
 public:
   explicit CodeWidget(QWidget* parent = nullptr);
-  ~CodeWidget();
+  ~CodeWidget() override;
 
   void Step();
   void StepOver();
@@ -61,11 +62,14 @@ private:
   void UpdateCallstack();
   void UpdateFunctionCalls(const Common::Symbol* symbol);
   void UpdateFunctionCallers(const Common::Symbol* symbol);
+  void UpdateNotes();
 
+  void OnShowDemangledNamesChanged();
   void OnPPCSymbolsChanged();
   void OnSearchAddress();
   void OnSearchSymbols();
   void OnSelectSymbol();
+  void OnSelectNote();
   void OnSelectCallstack();
   void OnSelectFunctionCallers();
   void OnSelectFunctionCalls();
@@ -73,17 +77,22 @@ private:
   void closeEvent(QCloseEvent*) override;
   void showEvent(QShowEvent* event) override;
 
+  const std::string& GetSymbolDisplayName(const Common::Symbol* symbol) const;
+
   Core::System& m_system;
   PPCSymbolDB& m_ppc_symbol_db;
+  bool m_show_demangled_names;
 
   BranchWatchDialog* m_branch_watch_dialog = nullptr;
   QLineEdit* m_search_address;
+  QToolButton* m_lock_btn;
   QPushButton* m_branch_watch;
 
   QLineEdit* m_search_callstack;
   QListWidget* m_callstack_list;
   QLineEdit* m_search_symbols;
   QListWidget* m_symbols_list;
+  QListWidget* m_note_list;
   QLineEdit* m_search_calls;
   QListWidget* m_function_calls_list;
   QLineEdit* m_search_callers;

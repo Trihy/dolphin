@@ -5,6 +5,8 @@
 
 #include "Common/Assembler/GekkoParser.h"
 
+#include <utility>
+
 #include <QLabel>
 #include <QPalette>
 
@@ -16,7 +18,7 @@ using namespace Common::GekkoAssembler::detail;
 class HighlightParsePlugin : public ParsePlugin
 {
 public:
-  virtual ~HighlightParsePlugin() = default;
+  ~HighlightParsePlugin() override = default;
 
   std::vector<std::pair<int, int>>&& MoveParens() { return std::move(m_matched_parens); }
   std::vector<std::tuple<int, int, HighlightFormat>>&& MoveFormatting()
@@ -189,7 +191,7 @@ void GekkoSyntaxHighlight::highlightBlock(const QString& text)
 
 GekkoSyntaxHighlight::GekkoSyntaxHighlight(QTextDocument* document, QTextCharFormat base_format,
                                            bool dark_scheme)
-    : QSyntaxHighlighter(document), m_base_format(base_format)
+    : QSyntaxHighlighter(document), m_base_format(std::move(base_format))
 {
   QPalette base_scheme;
   m_theme_idx = dark_scheme ? 1 : 0;

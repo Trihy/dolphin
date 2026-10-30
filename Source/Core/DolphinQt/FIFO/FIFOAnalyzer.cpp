@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <bit>
 #include <ranges>
+#include <utility>
 
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -20,7 +21,6 @@
 #include <QTreeWidgetItem>
 
 #include "Common/Assert.h"
-#include "Common/EnumUtils.h"
 #include "Common/Swap.h"
 #include "Core/FifoPlayer/FifoPlayer.h"
 
@@ -30,7 +30,6 @@
 #include "VideoCommon/BPMemory.h"
 #include "VideoCommon/CPMemory.h"
 #include "VideoCommon/OpcodeDecoding.h"
-#include "VideoCommon/VertexLoaderBase.h"
 #include "VideoCommon/XFStructs.h"
 
 // Values range from 0 to number of frames - 1
@@ -47,7 +46,7 @@ FIFOAnalyzer::FIFOAnalyzer(FifoPlayer& fifo_player) : m_fifo_player(fifo_player)
 
   UpdateTree();
 
-  auto& settings = Settings::GetQSettings();
+  const auto& settings = Settings::GetQSettings();
 
   m_object_splitter->restoreState(
       settings.value(QStringLiteral("fifoanalyzer/objectsplitter")).toByteArray());
@@ -117,8 +116,7 @@ void FIFOAnalyzer::CreateWidgets()
 void FIFOAnalyzer::ConnectWidgets()
 {
   connect(m_tree_widget, &QTreeWidget::itemSelectionChanged, this, &FIFOAnalyzer::UpdateDetails);
-  connect(m_detail_list, &QListWidget::itemSelectionChanged, this,
-          &FIFOAnalyzer::UpdateDescription);
+  connect(m_detail_list, &QListWidget::currentRowChanged, this, &FIFOAnalyzer::UpdateDescription);
 
   connect(m_search_edit, &QLineEdit::returnPressed, this, &FIFOAnalyzer::BeginSearch);
   connect(m_search_new, &QPushButton::clicked, this, &FIFOAnalyzer::BeginSearch);
@@ -147,7 +145,7 @@ void FIFOAnalyzer::UpdateTree()
 
   m_tree_widget->addTopLevelItem(recording_item);
 
-  auto* file = m_fifo_player.GetFile();
+  const auto* const file = m_fifo_player.GetFile();
 
   const u32 frame_count = file->GetFrameCount();
 
@@ -157,15 +155,15 @@ void FIFOAnalyzer::UpdateTree()
 
     recording_item->addChild(frame_item);
 
-    const AnalyzedFrameInfo& frame_info = m_fifo_player.GetAnalyzedFrameInfo(frame);
-    ASSERT(frame_info.parts.size() != 0);
+    const auto& [parts, part_type_counts] = m_fifo_player.GetAnalyzedFrameInfo(frame);
+    ASSERT(parts.size() != 0);
 
     Common::EnumMap<u32, FramePartType::EFBCopy> part_counts;
     u32 part_start = 0;
 
-    for (u32 part_nr = 0; part_nr < frame_info.parts.size(); part_nr++)
+    for (u32 part_nr = 0; part_nr < parts.size(); part_nr++)
     {
-      const auto& part = frame_info.parts[part_nr];
+      const auto& part = parts[part_nr];
 
       const u32 part_type_nr = part_counts[part.m_type];
       part_counts[part.m_type]++;
@@ -191,9 +189,9 @@ void FIFOAnalyzer::UpdateTree()
     }
 
     // We shouldn't end on a Command (it should end with an EFB copy)
-    ASSERT(part_start == frame_info.parts.size());
+    ASSERT(part_start == parts.size());
     // The counts we computed should match the frame's counts
-    ASSERT(std::ranges::equal(frame_info.part_type_counts, part_counts));
+    ASSERT(std::ranges::equal(part_type_counts, part_counts));
   }
 }
 
@@ -202,9 +200,9 @@ namespace
 class DetailCallback : public OpcodeDecoder::Callback
 {
 public:
-  explicit DetailCallback(CPState cpmem) : m_cpmem(cpmem) {}
+  explicit DetailCallback(const CPState& cpmem) : m_cpmem(cpmem) {}
 
-  OPCODE_CALLBACK(void OnCP(u8 command, u32 value))
+  OPCODE_CALLBACK(void OnCP(const u8 command, const u32 value))
   {
     // Note: No need to update m_cpmem as it already has the final value for this object
 
@@ -217,7 +215,7 @@ public:
                .arg(QString::fromStdString(name));
   }
 
-  OPCODE_CALLBACK(void OnXF(u16 address, u8 count, const u8* data))
+  OPCODE_CALLBACK(void OnXF(const u16 address, const u8 count, const u8* data))
   {
     const auto [name, desc] = GetXFTransferInfo(address, count, data);
     ASSERT(!name.empty());
@@ -236,7 +234,7 @@ public:
     text += QStringLiteral("  ") + QString::fromStdString(name);
   }
 
-  OPCODE_CALLBACK(void OnBP(u8 command, u32 value))
+  OPCODE_CALLBACK(void OnBP(const u8 command, const u32 value))
   {
     const auto [name, desc] = GetBPRegInfo(command, value);
     ASSERT(!name.empty());
@@ -246,15 +244,17 @@ public:
                .arg(value, 6, 16, QLatin1Char('0'))
                .arg(QString::fromStdString(name));
   }
-  OPCODE_CALLBACK(void OnIndexedLoad(CPArray array, u32 index, u16 address, u8 size))
+  OPCODE_CALLBACK(void OnIndexedLoad(const CPArray array, const u32 index, const u16 address,
+                                     const u8 size))
   {
     const auto [desc, written] = GetXFIndexedLoadInfo(array, index, address, size);
     text = QStringLiteral("LOAD INDX %1   %2")
                .arg(QString::fromStdString(fmt::to_string(array)))
                .arg(QString::fromStdString(desc));
   }
-  OPCODE_CALLBACK(void OnPrimitiveCommand(OpcodeDecoder::Primitive primitive, u8 vat,
-                                          u32 vertex_size, u16 num_vertices, const u8* vertex_data))
+  OPCODE_CALLBACK(void OnPrimitiveCommand(const OpcodeDecoder::Primitive primitive, const u8 vat,
+                                          const u32 vertex_size, const u16 num_vertices,
+                                          const u8* vertex_data))
   {
     const auto name = fmt::to_string(primitive);
 
@@ -263,7 +263,7 @@ public:
     const u32 object_prim_size = num_vertices * vertex_size;
 
     const u8 opcode =
-        0x80 | Common::ToUnderlying(primitive) << OpcodeDecoder::GX_PRIMITIVE_SHIFT | vat;
+        0x80 | std::to_underlying(primitive) << OpcodeDecoder::GX_PRIMITIVE_SHIFT | vat;
     text = QStringLiteral("PRIMITIVE %1 (%2)  %3 vertices %4 bytes/vertex %5 total bytes")
                .arg(QString::fromStdString(name))
                .arg(opcode, 2, 16, QLatin1Char('0'))
@@ -284,14 +284,14 @@ public:
 #endif
   }
 
-  OPCODE_CALLBACK(void OnDisplayList(u32 address, u32 size))
+  OPCODE_CALLBACK(void OnDisplayList(const u32 address, const u32 size))
   {
     text = QObject::tr("Call display list at %1 with size %2")
                .arg(address, 8, 16, QLatin1Char('0'))
                .arg(size, 8, 16, QLatin1Char('0'));
   }
 
-  OPCODE_CALLBACK(void OnNop(u32 count))
+  OPCODE_CALLBACK(void OnNop(const u32 count))
   {
     if (count > 1)
       text = QStringLiteral("NOP (%1x)").arg(count);
@@ -313,11 +313,6 @@ public:
   OPCODE_CALLBACK(void OnCommand(const u8* data, u32 size)) {}
 
   OPCODE_CALLBACK(CPState& GetCPState()) { return m_cpmem; }
-
-  OPCODE_CALLBACK(u32 GetVertexSize(u8 vat))
-  {
-    return VertexLoaderBase::GetVertexSize(GetCPState().vtx_desc, GetCPState().vtx_attr[vat]);
-  }
 
   QString text;
   CPState m_cpmem;
@@ -349,18 +344,18 @@ void FIFOAnalyzer::UpdateDetails()
   const u32 start_part_nr = items[0]->data(0, PART_START_ROLE).toUInt();
   const u32 end_part_nr = items[0]->data(0, PART_END_ROLE).toUInt();
 
-  const AnalyzedFrameInfo& frame_info = m_fifo_player.GetAnalyzedFrameInfo(frame_nr);
+  const auto& [parts, _part_type_counts] = m_fifo_player.GetAnalyzedFrameInfo(frame_nr);
   const auto& fifo_frame = m_fifo_player.GetFile()->GetFrame(frame_nr);
 
-  const u32 object_start = frame_info.parts[start_part_nr].m_start;
-  const u32 object_end = frame_info.parts[end_part_nr].m_end;
+  const u32 object_start = parts[start_part_nr].m_start;
+  const u32 object_end = parts[end_part_nr].m_end;
   const u32 object_size = object_end - object_start;
 
   u32 object_offset = 0;
   // NOTE: object_info.m_cpmem is the state of cpmem _after_ all of the commands in this object.
   // However, it doesn't matter that it doesn't match the start, since it will match by the time
   // primitives are reached.
-  auto callback = DetailCallback(frame_info.parts[end_part_nr].m_cpmem);
+  auto callback = DetailCallback(parts[end_part_nr].m_cpmem);
 
   while (object_offset < object_size)
   {
@@ -432,11 +427,11 @@ void FIFOAnalyzer::BeginSearch()
   const u32 start_part_nr = items[0]->data(0, PART_START_ROLE).toUInt();
   const u32 end_part_nr = items[0]->data(0, PART_END_ROLE).toUInt();
 
-  const AnalyzedFrameInfo& frame_info = m_fifo_player.GetAnalyzedFrameInfo(frame_nr);
+  const auto& [parts, _part_type_counts] = m_fifo_player.GetAnalyzedFrameInfo(frame_nr);
   const FifoFrameInfo& fifo_frame = m_fifo_player.GetFile()->GetFrame(frame_nr);
 
-  const u32 object_start = frame_info.parts[start_part_nr].m_start;
-  const u32 object_end = frame_info.parts[end_part_nr].m_end;
+  const u32 object_start = parts[start_part_nr].m_start;
+  const u32 object_end = parts[end_part_nr].m_end;
   const u32 object_size = object_end - object_start;
 
   const u8* const object = &fifo_frame.fifoData[object_start];
@@ -473,7 +468,7 @@ void FIFOAnalyzer::FindNext()
   const int index = m_detail_list->currentRow();
   ASSERT(index >= 0);
 
-  auto next_result = std::ranges::find_if(
+  const auto next_result = std::ranges::find_if(
       m_search_results, [index](auto& result) { return result.m_cmd > static_cast<u32>(index); });
   if (next_result != m_search_results.end())
   {
@@ -486,7 +481,7 @@ void FIFOAnalyzer::FindPrevious()
   const int index = m_detail_list->currentRow();
   ASSERT(index >= 0);
 
-  auto prev_result =
+  const auto prev_result =
       std::ranges::find_if(m_search_results | std::views::reverse, [index](auto& result) {
         return result.m_cmd < static_cast<u32>(index);
       });
@@ -496,7 +491,7 @@ void FIFOAnalyzer::FindPrevious()
   }
 }
 
-void FIFOAnalyzer::ShowSearchResult(size_t index)
+void FIFOAnalyzer::ShowSearchResult(const size_t index)
 {
   if (m_search_results.empty())
     return;
@@ -527,7 +522,7 @@ class DescriptionCallback : public OpcodeDecoder::Callback
 public:
   explicit DescriptionCallback(const CPState& cpmem) : m_cpmem(cpmem) {}
 
-  OPCODE_CALLBACK(void OnBP(u8 command, u32 value))
+  OPCODE_CALLBACK(void OnBP(const u8 command, const u32 value))
   {
     const auto [name, desc] = GetBPRegInfo(command, value);
     ASSERT(!name.empty());
@@ -542,7 +537,7 @@ public:
       text += QString::fromStdString(desc);
   }
 
-  OPCODE_CALLBACK(void OnCP(u8 command, u32 value))
+  OPCODE_CALLBACK(void OnCP(const u8 command, const u32 value))
   {
     // Note: No need to update m_cpmem as it already has the final value for this object
 
@@ -559,7 +554,7 @@ public:
       text += QString::fromStdString(desc);
   }
 
-  OPCODE_CALLBACK(void OnXF(u16 address, u8 count, const u8* data))
+  OPCODE_CALLBACK(void OnXF(const u16 address, const u8 count, const u8* data))
   {
     const auto [name, desc] = GetXFTransferInfo(address, count, data);
     ASSERT(!name.empty());
@@ -574,7 +569,8 @@ public:
       text += QString::fromStdString(desc);
   }
 
-  OPCODE_CALLBACK(void OnIndexedLoad(CPArray array, u32 index, u16 address, u8 size))
+  OPCODE_CALLBACK(void OnIndexedLoad(const CPArray array, const u32 index, const u16 address,
+                                     const u8 size))
   {
     const auto [desc, written] = GetXFIndexedLoadInfo(array, index, address, size);
 
@@ -606,7 +602,8 @@ public:
   }
 
   OPCODE_CALLBACK(void OnPrimitiveCommand(OpcodeDecoder::Primitive primitive, u8 vat,
-                                          u32 vertex_size, u16 num_vertices, const u8* vertex_data))
+                                          const u32 vertex_size, const u16 num_vertices,
+                                          const u8* vertex_data))
   {
     const auto name = fmt::format("{} VAT {}", primitive, vat);
 
@@ -615,12 +612,12 @@ public:
     text = QObject::tr("Primitive %1").arg(QString::fromStdString(name));
     text += QLatin1Char{'\n'};
 
-    const auto& vtx_desc = m_cpmem.vtx_desc;
+    const auto& [low, high] = m_cpmem.vtx_desc;
     const auto& vtx_attr = m_cpmem.vtx_attr[vat];
 
     u32 i = 0;
-    const auto process_component = [&](VertexComponentFormat cformat, ComponentFormat format,
-                                       u32 non_indexed_count, u32 indexed_count = 1) {
+    const auto process_component = [&](const VertexComponentFormat cformat, ComponentFormat format,
+                                       const u32 non_indexed_count, const u32 indexed_count = 1) {
       u32 count;
       if (cformat == VertexComponentFormat::NotPresent)
         return;
@@ -656,7 +653,7 @@ public:
       }
       text += QLatin1Char{' '};
     };
-    const auto process_simple_component = [&](u32 size) {
+    const auto process_simple_component = [&](const u32 size) {
       for (u32 component_off = 0; component_off < size; component_off++)
       {
         text += QStringLiteral("%1").arg(vertex_data[i + component_off], 2, 16, QLatin1Char('0'));
@@ -671,22 +668,21 @@ public:
       ASSERT(i == vertex_num * vertex_size);
 
       text += QLatin1Char{'\n'};
-      if (vtx_desc.low.PosMatIdx)
+      if (low.PosMatIdx)
         process_simple_component(1);
-      for (auto texmtxidx : vtx_desc.low.TexMatIdx)
+      for (auto texmtxidx : low.TexMatIdx)
       {
         if (texmtxidx)
           process_simple_component(1);
       }
-      process_component(vtx_desc.low.Position, vtx_attr.g0.PosFormat,
+      process_component(low.Position, vtx_attr.g0.PosFormat,
                         vtx_attr.g0.PosElements == CoordComponentCount::XY ? 2 : 3);
-      const u32 normal_component_count =
-          vtx_desc.low.Normal == VertexComponentFormat::Direct ? 3 : 1;
+      const u32 normal_component_count = low.Normal == VertexComponentFormat::Direct ? 3 : 1;
       const u32 normal_elements = vtx_attr.g0.NormalElements == NormalComponentCount::NTB ? 3 : 1;
-      process_component(vtx_desc.low.Normal, vtx_attr.g0.NormalFormat,
+      process_component(low.Normal, vtx_attr.g0.NormalFormat,
                         normal_component_count * normal_elements,
                         vtx_attr.g0.NormalIndex3 ? normal_elements : 1);
-      for (u32 c = 0; c < vtx_desc.low.Color.Size(); c++)
+      for (u32 c = 0; c < low.Color.Size(); c++)
       {
         static constexpr Common::EnumMap<u32, ColorFormat::RGBA8888> component_sizes = {
             2,  // RGB565
@@ -696,7 +692,7 @@ public:
             3,  // RGBA6666
             4,  // RGBA8888
         };
-        switch (vtx_desc.low.Color[c])
+        switch (low.Color[c])
         {
         case VertexComponentFormat::Index8:
           process_simple_component(1);
@@ -711,9 +707,9 @@ public:
           break;
         }
       }
-      for (u32 t = 0; t < vtx_desc.high.TexCoord.Size(); t++)
+      for (u32 t = 0; t < high.TexCoord.Size(); t++)
       {
-        process_component(vtx_desc.high.TexCoord[t], vtx_attr.GetTexFormat(t),
+        process_component(high.TexCoord[t], vtx_attr.GetTexFormat(t),
                           vtx_attr.GetTexElements(t) == TexComponentCount::ST ? 2 : 1);
       }
     }
@@ -733,11 +729,6 @@ public:
   OPCODE_CALLBACK(void OnCommand(const u8* data, u32 size)) {}
 
   OPCODE_CALLBACK(CPState& GetCPState()) { return m_cpmem; }
-
-  OPCODE_CALLBACK(u32 GetVertexSize(u8 vat))
-  {
-    return VertexLoaderBase::GetVertexSize(GetCPState().vtx_desc, GetCPState().vtx_attr[vat]);
-  }
 
   QString text;
   CPState m_cpmem;
@@ -764,15 +755,15 @@ void FIFOAnalyzer::UpdateDescription()
   const u32 end_part_nr = items[0]->data(0, PART_END_ROLE).toUInt();
   const u32 entry_nr = m_detail_list->currentRow();
 
-  const AnalyzedFrameInfo& frame_info = m_fifo_player.GetAnalyzedFrameInfo(frame_nr);
+  const auto& [parts, _part_type_counts] = m_fifo_player.GetAnalyzedFrameInfo(frame_nr);
   const FifoFrameInfo& fifo_frame = m_fifo_player.GetFile()->GetFrame(frame_nr);
 
-  const u32 object_start = frame_info.parts[start_part_nr].m_start;
-  const u32 object_end = frame_info.parts[end_part_nr].m_end;
+  const u32 object_start = parts[start_part_nr].m_start;
+  const u32 object_end = parts[end_part_nr].m_end;
   const u32 object_size = object_end - object_start;
   const u32 entry_start = m_object_data_offsets[entry_nr];
 
-  auto callback = DescriptionCallback(frame_info.parts[end_part_nr].m_cpmem);
+  auto callback = DescriptionCallback(parts[end_part_nr].m_cpmem);
   OpcodeDecoder::RunCommand(&fifo_frame.fifoData[object_start + entry_start],
                             object_size - entry_start, callback);
   m_entry_detail_browser->setText(callback.text);
